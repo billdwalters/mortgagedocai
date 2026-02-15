@@ -409,7 +409,11 @@ mit = dti.get('monthly_income_total')
 mdt = dti.get('monthly_debt_total')
 hpu = dti.get('housing_payment_used')
 mi = dti.get('missing_inputs', [])
+mic = dti.get('monthly_income_combined')
+fedc = dti.get('front_end_dti_combined')
+bedc = dti.get('back_end_dti_combined')
 print(f'back_end_dti={bed} front_end_dti={fed} income={mit} debt={mdt} housing={hpu} missing={mi}')
+print(f'  combined: income={mic} front_end_dti={fedc} back_end_dti={bedc}')
 sys.exit(0)
 ")
         if [ $? -ne 0 ]; then
@@ -527,6 +531,14 @@ if isinstance(mit, dict):
         cid = c.get('chunk_id', '')
         if cid and cid not in rp_ids:
             errors.append(f'monthly_income_total: cited chunk_id {cid} NOT in retrieval_pack')
+
+# Check monthly_income_total_combined citations
+mic = fe.get('monthly_income_total_combined')
+if isinstance(mic, dict):
+    for c in (mic.get('citations') or []):
+        cid = c.get('chunk_id', '')
+        if cid and cid not in rp_ids:
+            errors.append(f'monthly_income_total_combined: cited chunk_id {cid} NOT in retrieval_pack')
 
 if errors:
     for e in errors:

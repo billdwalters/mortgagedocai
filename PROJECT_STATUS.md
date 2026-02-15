@@ -857,10 +857,40 @@ Added deterministic extraction of `monthly_income_total` from retrieval pack evi
 - Minimum: $100/month
 - Maximum: $500,000/month
 
+### Combined self-employed income (2026-02-15)
+
+For self-employed borrowers with multiple businesses, the extractor also computes combined monthly income by summing all eligible P&L net-income candidates.
+
+**Eligibility rules:**
+- Pattern must be `PL_NET_INCOME` (net income only, not total income)
+- Distinct `file_relpath` (no duplicate files)
+- Same `period_months` as the primary winner (within 0.1 tolerance)
+
+**Output fields in `income_analysis.json`:**
+```json
+"monthly_income_total_combined": {
+  "value": 21398.21,
+  "citations": [...],
+  "source": "P&L",
+  "components": [
+    {"file_relpath": "...", "period_total": 112720.37, "period_months": 9.0, "monthly_equivalent": 12524.49, "chunk_id": "..."},
+    {"file_relpath": "...", "period_total": 79863.50, "period_months": 9.0, "monthly_equivalent": 8873.72, "chunk_id": "..."}
+  ]
+}
+```
+
+**Output fields in `dti.json`:**
+- `monthly_income_combined`: combined monthly income total
+- `front_end_dti_combined`: housing / combined income
+- `back_end_dti_combined`: (housing + debt) / combined income
+
+All existing primary fields (`monthly_income_total`, `front_end_dti`, `back_end_dti`) remain unchanged for backward compatibility.
+
 ### DTI integration
 
 - Deterministic `monthly_income_total.value` takes priority over LLM income_items summation
 - `_compute_dti()` checks `monthly_income_total` first; falls back to individual items if not available
+- `_compute_dti()` also computes combined DTI ratios from `monthly_income_combined` when available
 - Confidence re-calibrated after deterministic extractors: both income+PITIA → 0.7, one of them → 0.5
 
 ### Retrieval support

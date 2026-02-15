@@ -1179,7 +1179,9 @@ def _extract_monthly_income_total_from_retrieval_pack(
 
     if not candidates:
         _dprint("[DEBUG] deterministic income total: no candidates found")
-        return {"value": None, "citations": [], "source": None}
+        return {"value": None, "citations": [], "source": None,
+                "combined_value": None, "combined_citations": [],
+                "combined_source": None, "components": []}
 
     # Pick best: highest score, then first encountered
     candidates.sort(key=lambda c: -c["score"])
@@ -1200,10 +1202,49 @@ def _extract_monthly_income_total_from_retrieval_pack(
                 f"source={c['source']} "
                 f"file={c['file_relpath']!r} "
                 f"decimal={c['has_decimal']}{extra}")
+
+    # --- Combined self-employed income ---
+    # Eligible: PL_NET_INCOME pattern, distinct file_relpath,
+    # same period_months as primary (within 0.1).
+    primary_period = best.get("period_months")
+    seen_files: set = set()
+    components: List[Dict[str, Any]] = []
+    combined_value = 0.0
+    combined_citations: List[Dict[str, Any]] = []
+
+    for c in candidates:
+        if c["pattern"] != "PL_NET_INCOME":
+            continue
+        frp = c["file_relpath"]
+        if frp in seen_files:
+            continue
+        pm = c.get("period_months")
+        if primary_period is not None and pm is not None:
+            if abs(pm - primary_period) > 0.1:
+                continue
+        seen_files.add(frp)
+        combined_value += c["value"]
+        combined_citations.append({"chunk_id": c["chunk_id"], "quote": c["quote"]})
+        components.append({
+            "file_relpath": frp,
+            "period_total": c.get("period_total"),
+            "period_months": pm,
+            "monthly_equivalent": c["value"],
+            "chunk_id": c["chunk_id"],
+        })
+
+    combined_value = round(combined_value, 2)
+    _dprint(f"[DEBUG] income combined: ${combined_value:,.2f} "
+            f"from {len(components)} component(s)")
+
     return {
         "value": best["value"],
         "citations": [{"chunk_id": best["chunk_id"], "quote": best["quote"]}],
         "source": best["source"],
+        "combined_value": combined_value,
+        "combined_citations": combined_citations,
+        "combined_source": "P&L" if len(components) > 1 else best["source"],
+        "components": components,
     }
 
 
@@ -1529,6 +1570,18 @@ def _compute_dti(normalized: Dict[str, Any]) -> Dict[str, Any]:
         if convertible_count > 0:
             monthly_income_total = round(income_sum, 2)
 
+    # Combined income (self-employed multi-business) — from deterministic extractor
+    monthly_income_combined: Optional[float] = None
+    if isinstance(det_income_obj, dict) and det_income_obj.get("combined_value") is not None:
+        try:
+            comb_val = float(det_income_obj["combined_value"])
+            if comb_val > 0:
+                monthly_income_combined = round(comb_val, 2)
+                notes.append(f"monthly_income_combined from deterministic extractor: "
+                             f"${comb_val:,.2f}")
+        except (TypeError, ValueError):
+            pass
+
     if monthly_income_total is None:
         missing_inputs.append("monthly_income_total")
         notes.append("no income: deterministic extractor returned null "
@@ -1595,12 +1648,26 @@ def _compute_dti(normalized: Dict[str, Any]) -> Dict[str, Any]:
         if housing_used is not None and monthly_debt_total is not None:
             back_end_dti = round((housing_used + monthly_debt_total) / monthly_income_total, 4)
 
+    # Combined DTI ratios (when multiple self-employed businesses)
+    front_end_dti_combined = None
+    back_end_dti_combined = None
+
+    if monthly_income_combined is not None and monthly_income_combined > 0:
+        if housing_used is not None:
+            front_end_dti_combined = round(housing_used / monthly_income_combined, 4)
+        if housing_used is not None and monthly_debt_total is not None:
+            back_end_dti_combined = round(
+                (housing_used + monthly_debt_total) / monthly_income_combined, 4)
+
     return {
         "monthly_income_total": monthly_income_total,
+        "monthly_income_combined": monthly_income_combined,
         "monthly_debt_total": monthly_debt_total,
         "housing_payment_used": housing_used,
         "front_end_dti": front_end_dti,
         "back_end_dti": back_end_dti,
+        "front_end_dti_combined": front_end_dti_combined,
+        "back_end_dti_combined": back_end_dti_combined,
         "missing_inputs": missing_inputs,
         "notes": notes,
         "inputs_snapshot": {
@@ -2163,6 +2230,17 @@ def main(argv=None) -> None:
                 income_result["monthly_income_total"] = det_income
                 _dprint(f"[DEBUG] using deterministic income total: ${det_income['value']:,.2f} "
                         f"(source={det_income.get('source')})")
+                # Combined self-employed income (multiple P&L businesses)
+                if det_income.get("combined_value") is not None:
+                    income_result["monthly_income_total_combined"] = {
+                        "value": det_income["combined_value"],
+                        "citations": det_income.get("combined_citations", []),
+                        "source": det_income.get("combined_source"),
+                        "components": det_income.get("components", []),
+                    }
+                    _dprint(f"[DEBUG] using combined income total: "
+                            f"${det_income['combined_value']:,.2f} "
+                            f"({len(det_income.get('components', []))} businesses)")
             else:
                 _dprint("[DEBUG] no deterministic income total found")
 
@@ -2191,6 +2269,9 @@ def main(argv=None) -> None:
             income_total_obj = income_result.get("monthly_income_total")
             if isinstance(income_total_obj, dict):
                 all_inc_cits.extend(income_total_obj.get("citations", []))
+            income_combined_obj = income_result.get("monthly_income_total_combined")
+            if isinstance(income_combined_obj, dict):
+                all_inc_cits.extend(income_combined_obj.get("citations", []))
             # Deduplicate by chunk_id (preserve first quote)
             seen_cids: set = set()
             deduped_cits: List[Dict[str, Any]] = []
@@ -2221,6 +2302,17 @@ def main(argv=None) -> None:
                 if dti_result.get("front_end_dti") is not None:
                     dti_summary_parts.append(f"  Front-end DTI: {dti_result['front_end_dti']:.4f} "
                                              f"({dti_result['front_end_dti'] * 100:.2f}%)")
+                if dti_result.get("monthly_income_combined") is not None:
+                    mic = dti_result["monthly_income_combined"]
+                    dti_summary_parts.append(f"  Monthly income combined: ${mic:,.2f}")
+                if dti_result.get("front_end_dti_combined") is not None:
+                    dti_summary_parts.append(f"  Front-end DTI (combined): "
+                                             f"{dti_result['front_end_dti_combined']:.4f} "
+                                             f"({dti_result['front_end_dti_combined'] * 100:.2f}%)")
+                if dti_result.get("back_end_dti_combined") is not None:
+                    dti_summary_parts.append(f"  Back-end DTI (combined): "
+                                             f"{dti_result['back_end_dti_combined']:.4f} "
+                                             f"({dti_result['back_end_dti_combined'] * 100:.2f}%)")
                 if dti_result.get("missing_inputs"):
                     dti_summary_parts.append(f"  Missing inputs: {', '.join(dti_result['missing_inputs'])}")
                 for note in (dti_result.get("notes") or []):
@@ -2279,6 +2371,7 @@ def main(argv=None) -> None:
                 "proposed_pitia": income_result["proposed_pitia"],
                 "monthly_liabilities_total": income_result.get("monthly_liabilities_total"),
                 "monthly_income_total": income_result.get("monthly_income_total"),
+                "monthly_income_total_combined": income_result.get("monthly_income_total_combined"),
                 "confidence": income_result["confidence"],
             })
         if dti_result is not None:
