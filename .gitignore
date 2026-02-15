@@ -1,0 +1,41 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+*.egg
+
+# IDE / editor configs
+.idea/
+.cursor/
+.claude/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local data (Qdrant vector DB, embeddings, runtime data)
+data/
+
+# Logs
+logs/
+*.log
+
+# Environment variables
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Windows temp files
+NDH6SA~*

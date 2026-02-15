@@ -1,0 +1,7 @@
+sentence-transformers>=2.6.0
+torch>=2.2.0
+transformers>=4.40.0
+pypdf>=4.0.0
+qdrant-client==1.14.3
+requests>=2.31.0
+
