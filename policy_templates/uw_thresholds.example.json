@@ -1,0 +1,8 @@
+{
+  "policy_version": "v0.1",
+  "program": "Conventional",
+  "thresholds": {
+    "max_back_end_dti": 0.45,
+    "max_front_end_dti": null
+  }
+}

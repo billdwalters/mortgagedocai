@@ -1709,22 +1709,96 @@ def _resolve_uw_decision_inputs(
 _UW_MAX_BACK_END_DTI = 0.45
 
 
+def _load_uw_policy(tenant_id: str) -> Dict[str, Any]:
+    """Load tenant-specific UW policy thresholds, falling back to defaults.
+
+    Looks for:
+        NAS_ANALYZE / "tenants" / {tenant_id} / "policy" / "uw_thresholds.json"
+    """
+    policy_path = NAS_ANALYZE / "tenants" / tenant_id / "policy" / "uw_thresholds.json"
+    defaults: Dict[str, Any] = {
+        "program": "Conventional",
+        "thresholds": {
+            "max_back_end_dti": _UW_MAX_BACK_END_DTI,
+            "max_front_end_dti": None,
+        },
+        "policy_version": None,
+        "policy_source": "default",
+        "policy_path": None,
+    }
+    try:
+        if policy_path.exists():
+            raw = json.loads(policy_path.read_text(encoding="utf-8"))
+            threshold = float(raw["thresholds"]["max_back_end_dti"])
+            if not (0 < threshold < 1):
+                raise ValueError(f"max_back_end_dti={threshold} outside (0,1)")
+            _dprint(f"[DEBUG] uw_policy: loaded from {policy_path}")
+            return {
+                "program": raw.get("program", "Conventional"),
+                "thresholds": {
+                    "max_back_end_dti": threshold,
+                    "max_front_end_dti": raw["thresholds"].get("max_front_end_dti"),
+                },
+                "policy_version": raw.get("policy_version"),
+                "policy_source": "file",
+                "policy_path": str(policy_path),
+            }
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        _dprint(f"[DEBUG] uw_policy: failed to load {policy_path}: {exc}; using defaults")
+    return defaults
+
+
+def _build_version_info(policy: Dict[str, Any]) -> Dict[str, Any]:
+    """Build version.json metadata. Git operations fail gracefully."""
+    git_commit = None
+    git_dirty = None
+    try:
+        r = subprocess.run(
+            ["git", "-C", "/opt/mortgagedocai", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            git_commit = r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        r = subprocess.run(
+            ["git", "-C", "/opt/mortgagedocai", "status", "--porcelain"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            git_dirty = bool(r.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {
+        "generated_at_utc": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "git": {"commit": git_commit, "dirty": git_dirty},
+        "schemas": {"uw_decision": "v0.7"},
+        "policy": {
+            "policy_version": policy.get("policy_version"),
+            "policy_source": policy["policy_source"],
+            "path": policy.get("policy_path"),
+        },
+    }
+
+
 def _build_uw_decision(
     income_analysis: Dict[str, Any],
     dti: Dict[str, Any],
     tenant_id: str,
     loan_id: str,
     run_id: str,
+    policy: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Build deterministic underwriting decision from income_analysis outputs.
 
-    Rules (v0.1 hardcoded):
-      back_end_dti is None  -> UNKNOWN
-      back_end_dti <= 0.45  -> PASS
-      back_end_dti >  0.45  -> FAIL
+    Rules (v0.7 policy-driven):
+      back_end_dti is None                                -> UNKNOWN
+      back_end_dti <= policy.thresholds.max_back_end_dti  -> PASS
+      back_end_dti >  policy.thresholds.max_back_end_dti  -> FAIL
     Same rules applied independently for combined scenario.
     """
-    threshold = _UW_MAX_BACK_END_DTI
+    threshold = policy["thresholds"]["max_back_end_dti"]
     back_end_dti = dti.get("back_end_dti")
     front_end_dti = dti.get("front_end_dti")
     back_end_dti_combined = dti.get("back_end_dti_combined")
@@ -1843,12 +1917,14 @@ def _build_uw_decision(
         "loan_id": loan_id,
         "run_id": run_id,
         "ruleset": {
-            "program": "Conventional",
-            "version": "v0.1-hardcoded",
+            "program": policy["program"],
+            "version": "v0.7-policy",
             "thresholds": {
                 "max_back_end_dti": threshold,
-                "max_front_end_dti": None,
+                "max_front_end_dti": policy["thresholds"].get("max_front_end_dti"),
             },
+            "policy_source": policy["policy_source"],
+            "policy_version": policy.get("policy_version"),
         },
         "inputs": {
             "pitia": pitia_val,
@@ -1885,8 +1961,16 @@ def _format_uw_decision_md(decision: Dict[str, Any]) -> str:
     lines = [
         "# Underwriting Decision (Deterministic)",
         "",
+        "| Field | Value |",
+        "|-------|-------|",
+        f"| Tenant | {decision['tenant_id']} |",
+        f"| Loan | {decision['loan_id']} |",
+        f"| Run | {decision['run_id']} |",
+        f"| Generated | {datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')} |",
+        "",
         f"**Program:** {ruleset['program']}",
         f"**Ruleset version:** {ruleset['version']}",
+        f"**Policy source:** {ruleset.get('policy_source', 'default')}",
         f"**Threshold:** back-end DTI <= {ruleset['thresholds']['max_back_end_dti']:.0%}",
         "",
         "## Primary Decision",
@@ -1945,6 +2029,31 @@ def _format_uw_decision_md(decision: Dict[str, Any]) -> str:
             lines.append(f"- Back-end DTI (combined): {dti_c['back_end']:.4f} "
                          f"({dti_c['back_end'] * 100:.2f}%)")
     lines.append("")
+
+    # --- Evidence / Citations ---
+    cit_dict = decision.get("citations", {})
+    has_any_cit = any(cit_dict.get(k) for k in
+                      ("pitia", "liabilities", "income_primary", "income_combined"))
+    if has_any_cit:
+        lines.extend(["## Evidence / Citations", ""])
+        for section_key, section_label in [
+            ("pitia", "PITIA"),
+            ("liabilities", "Liabilities"),
+            ("income_primary", "Income (Primary)"),
+            ("income_combined", "Income (Combined)"),
+        ]:
+            section_cits = cit_dict.get(section_key, [])
+            if section_cits:
+                lines.append(f"### {section_label}")
+                lines.append("")
+                for c in section_cits:
+                    cid = c.get("chunk_id", "unknown")
+                    quote = (c.get("quote", "") or "").strip()[:200]
+                    if quote:
+                        lines.append(f"- **{cid}**: {quote}")
+                    else:
+                        lines.append(f"- **{cid}**")
+                lines.append("")
 
     return "\n".join(lines) + "\n"
 
@@ -2381,6 +2490,8 @@ def main(argv=None) -> None:
 
         # --- uw_decision: purely deterministic, no LLM needed ---
         if is_uw_decision:
+            policy = _load_uw_policy(args.tenant_id)
+            _dprint(f"[DEBUG] uw_decision: policy_source={policy['policy_source']}")
             decision_data = _resolve_uw_decision_inputs(profiles_dir)
             decision_result = _build_uw_decision(
                 income_analysis=decision_data["income_analysis"],
@@ -2388,6 +2499,7 @@ def main(argv=None) -> None:
                 tenant_id=args.tenant_id,
                 loan_id=args.loan_id,
                 run_id=ctx.run_id,
+                policy=policy,
             )
             decision_md_text = _format_uw_decision_md(decision_result)
             answer_text = _synthesize_uw_decision_answer(decision_result)
@@ -2434,6 +2546,12 @@ def main(argv=None) -> None:
             })
             atomic_write_text(prof_out / "citations.jsonl",
                               "\n".join(citations_lines) + ("\n" if citations_lines else ""))
+
+            # Write run-level version.json
+            version_meta_dir = out_dir / "_meta"
+            ensure_dir(version_meta_dir)
+            atomic_write_json(version_meta_dir / "version.json",
+                              _build_version_info(policy))
 
             run_meta.append({
                 "profile": profile,

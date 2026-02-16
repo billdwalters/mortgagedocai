@@ -600,8 +600,13 @@ if p_status not in ('PASS', 'FAIL', 'UNKNOWN'):
     sys.exit(1)
 
 version = dj.get('ruleset', {}).get('version')
-if version != 'v0.1-hardcoded':
-    print(f'FAIL: ruleset.version={version!r} expected v0.1-hardcoded')
+if version != 'v0.7-policy':
+    print(f'FAIL: ruleset.version={version!r} expected v0.7-policy')
+    sys.exit(1)
+
+policy_src = dj.get('ruleset', {}).get('policy_source')
+if policy_src not in ('file', 'default'):
+    print(f'FAIL: ruleset.policy_source={policy_src!r} not in (file, default)')
     sys.exit(1)
 
 combined = dj.get('decision_combined')
@@ -618,14 +623,15 @@ for key in ('pitia', 'liabilities', 'income_primary'):
         print(f'FAIL: citations.{key} missing')
         sys.exit(1)
 
-print(f'primary={p_status} combined={c_status}')
+print(f'primary={p_status} combined={c_status} policy={policy_src}')
 sys.exit(0)
 ")
             if [ $? -ne 0 ]; then
                 fail "uw_decision: decision.json validation failed: ${UW_DEC_CHECK}"
             else
                 UW_DEC_PRIMARY=$(echo "$UW_DEC_CHECK" | sed -n 's/primary=\([^ ]*\).*/\1/p')
-                UW_DEC_COMBINED=$(echo "$UW_DEC_CHECK" | sed -n 's/.*combined=\(.*\)/\1/p')
+                UW_DEC_COMBINED=$(echo "$UW_DEC_CHECK" | sed -n 's/.*combined=\([^ ]*\).*/\1/p')
+                UW_DEC_POLICY=$(echo "$UW_DEC_CHECK" | sed -n 's/.*policy=\([^ ]*\).*/\1/p')
                 echo "  uw_decision: ${UW_DEC_CHECK}"
             fi
         fi
@@ -636,6 +642,14 @@ sys.exit(0)
                 fail "uw_decision: ${f} not found"
             fi
         done
+
+        # Verify version.json exists at run-level outputs/_meta
+        VERSION_JSON="${BASE}/${RUN_ID}/outputs/_meta/version.json"
+        if [ ! -f "$VERSION_JSON" ]; then
+            fail "uw_decision: version.json not found at ${VERSION_JSON}"
+        else
+            echo "  uw_decision: version.json found"
+        fi
     fi
 fi
 
@@ -660,7 +674,7 @@ else
         echo "  dti              : ${INCOME_DTI}"
     fi
     if [ "${RUN_UW_DECISION}" = "1" ]; then
-        echo "  uw_decision      : primary=${UW_DEC_PRIMARY} combined=${UW_DEC_COMBINED}"
+        echo "  uw_decision      : primary=${UW_DEC_PRIMARY} combined=${UW_DEC_COMBINED} policy=${UW_DEC_POLICY}"
     fi
     exit 0
 fi

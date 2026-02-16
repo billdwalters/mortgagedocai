@@ -541,8 +541,8 @@ RUN_UW_DECISION=1 bash scripts/run_regression_smoke.sh
 When enabled, the smoke test additionally:
 8. Runs Step12 with `--analysis-profile uw_decision` (no LLM — deterministic)
 9. Asserts `decision.json` exists with valid schema and `decision_primary.status` ∈ {PASS, FAIL, UNKNOWN}
-10. Validates `ruleset.version = v0.1-hardcoded` and citation structure
-11. Asserts `answer.json`, `answer.md`, `decision.md` exist
+10. Validates `ruleset.version = v0.7-policy`, `policy_source` ∈ {file, default}, and citation structure
+11. Asserts `answer.json`, `answer.md`, `decision.md`, and `outputs/_meta/version.json` exist
 
 ---
 
@@ -914,9 +914,9 @@ All existing primary fields (`monthly_income_total`, `front_end_dti`, `back_end_
 
 ---
 
-## Step12 Profile: uw_decision (2026-02-15)
+## Step12 Profile: uw_decision (2026-02-15, v0.7)
 
-Deterministic underwriting decision simulation. When `--analysis-profile uw_decision` is used, Step12 reads the already-computed `income_analysis.json` + `dti.json` from the `income_analysis` profile and applies hardcoded DTI threshold rules. No LLM call is needed — purely deterministic.
+Deterministic underwriting decision simulation. When `--analysis-profile uw_decision` is used, Step12 reads the already-computed `income_analysis.json` + `dti.json` from the `income_analysis` profile and applies configurable DTI threshold rules. No LLM call is needed — purely deterministic.
 
 ### Prerequisites
 
@@ -926,12 +926,37 @@ The `income_analysis` profile must have run first for the same `run_id`. The uw_
 
 When running `uw_decision` as a separate invocation (not in the same command as `income_analysis`), the rerun-wipe logic preserves profiles not being overwritten. Before wiping the final directory, non-current profiles are copied from `final` into `staging` via `shutil.copytree`. This ensures `income_analysis` outputs survive when only `uw_decision` runs.
 
-### Decision rules (v0.1-hardcoded)
+### Configurable policy thresholds (v0.7)
+
+Thresholds are loaded from a per-tenant JSON policy file. If the file is missing or invalid, hardcoded defaults are used.
+
+**Policy file location:**
+```
+/mnt/nas_apps/nas_analyze/tenants/{tenant_id}/policy/uw_thresholds.json
+```
+
+**Schema (v0.1):**
+```json
+{
+  "policy_version": "v0.1",
+  "program": "Conventional",
+  "thresholds": {
+    "max_back_end_dti": 0.45,
+    "max_front_end_dti": null
+  }
+}
+```
+
+**Defaults (when no file exists):** program="Conventional", max_back_end_dti=0.45, max_front_end_dti=null.
+
+**Template:** `policy_templates/uw_thresholds.example.json` — copy to the tenant policy path to customize.
+
+### Decision rules (v0.7-policy)
 
 | Rule | Threshold | Outcome |
 |------|-----------|---------|
-| `back_end_dti <= 0.45` | 45% | PASS |
-| `back_end_dti > 0.45` | 45% | FAIL |
+| `back_end_dti <= policy.max_back_end_dti` | configurable (default 45%) | PASS |
+| `back_end_dti > policy.max_back_end_dti` | configurable (default 45%) | FAIL |
 | `back_end_dti` is null | — | UNKNOWN |
 
 Applied independently for both primary and combined (if available) scenarios.
@@ -947,8 +972,10 @@ Written to `outputs/profiles/uw_decision/`:
     "tenant_id": "...", "loan_id": "...", "run_id": "...",
     "ruleset": {
       "program": "Conventional",
-      "version": "v0.1-hardcoded",
-      "thresholds": {"max_back_end_dti": 0.45, "max_front_end_dti": null}
+      "version": "v0.7-policy",
+      "thresholds": {"max_back_end_dti": 0.45, "max_front_end_dti": null},
+      "policy_source": "file|default",
+      "policy_version": "v0.1"
     },
     "inputs": {
       "pitia": 3203.31, "liabilities_monthly": 582.00,
@@ -967,18 +994,39 @@ Written to `outputs/profiles/uw_decision/`:
       "pitia": [...], "liabilities": [...],
       "income_primary": [...], "income_combined": [...]
     },
-    "confidence": 0.95
+    "confidence": 0.9
   }
   ```
-- **decision.md** — Human-readable markdown summary
+- **decision.md** — Human-readable markdown with:
+  - Header table (tenant, loan, run_id, generated timestamp)
+  - Program, ruleset version, policy source, threshold
+  - Primary/combined decisions with DTI values
+  - Inputs snapshot (PITIA, liabilities, income, DTI ratios)
+  - Evidence/citations section (chunk_id + quote for each input category)
 - **answer.json / answer.md** — Standard profile outputs with synthesized answer text
 - **citations.jsonl** — Flattened citation list from income_analysis sources
 
+Written to `outputs/_meta/`:
+
+- **version.json** — Audit metadata:
+  ```json
+  {
+    "generated_at_utc": "2026-02-15T12:34:56Z",
+    "git": {"commit": "<hash>", "dirty": false},
+    "schemas": {"uw_decision": "v0.7"},
+    "policy": {
+      "policy_version": "v0.1",
+      "policy_source": "file|default",
+      "path": "/mnt/nas_apps/.../uw_thresholds.json"
+    }
+  }
+  ```
+  Git operations fail gracefully (commit=null, dirty=null if git unavailable).
+
 ### Confidence calibration
 
-- Both primary and combined decisions are PASS/FAIL → 0.95
-- At least one decision is UNKNOWN → 0.7
-- No valid DTI data → 0.4
+- Primary decision is PASS/FAIL (known status) → 0.9
+- Primary decision is UNKNOWN → 0.3
 
 ### Smoke test
 
@@ -1001,6 +1049,8 @@ RUN_INCOME_ANALYSIS=1 RUN_UW_DECISION=1 EXPECT_DTI=1 RUN_ID=2026-02-13T073441Z b
 - `decision.json` exists with valid schema
 - `decision_primary.status` ∈ {PASS, FAIL, UNKNOWN}
 - `decision_combined.status` ∈ {PASS, FAIL, UNKNOWN} (if present)
-- `ruleset.version` = `v0.1-hardcoded`
+- `ruleset.version` = `v0.7-policy`
+- `ruleset.policy_source` ∈ {file, default}
 - `citations` has `pitia`, `liabilities`, `income_primary` keys
 - `answer.json`, `answer.md`, `decision.md` exist
+- `outputs/_meta/version.json` exists
