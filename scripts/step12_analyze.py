@@ -1677,6 +1677,301 @@ def _compute_dti(normalized: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# uw_decision profile helpers (deterministic, no LLM)
+# ---------------------------------------------------------------------------
+
+def _resolve_uw_decision_inputs(
+    profiles_dir: Path,
+) -> Dict[str, Any]:
+    """Locate income_analysis.json + dti.json for uw_decision.
+
+    Searches profiles_dir / "income_analysis" (either from same invocation
+    or preserved from a previous run via profile-aware rerun).
+    Raises ContractError if not found.
+    """
+    base = profiles_dir / "income_analysis"
+    ia_path = base / "income_analysis.json"
+    dti_path = base / "dti.json"
+
+    if ia_path.exists() and dti_path.exists():
+        income_analysis = json.loads(ia_path.read_text(encoding="utf-8"))
+        dti = json.loads(dti_path.read_text(encoding="utf-8"))
+        _dprint(f"[DEBUG] uw_decision: loaded inputs from {base}")
+        return {"income_analysis": income_analysis, "dti": dti}
+
+    raise ContractError(
+        "uw_decision requires income_analysis profile to have run first. "
+        f"Expected income_analysis.json + dti.json in {base}"
+    )
+
+
+_UW_MAX_BACK_END_DTI = 0.45
+
+
+def _build_uw_decision(
+    income_analysis: Dict[str, Any],
+    dti: Dict[str, Any],
+    tenant_id: str,
+    loan_id: str,
+    run_id: str,
+) -> Dict[str, Any]:
+    """Build deterministic underwriting decision from income_analysis outputs.
+
+    Rules (v0.1 hardcoded):
+      back_end_dti is None  -> UNKNOWN
+      back_end_dti <= 0.45  -> PASS
+      back_end_dti >  0.45  -> FAIL
+    Same rules applied independently for combined scenario.
+    """
+    threshold = _UW_MAX_BACK_END_DTI
+    back_end_dti = dti.get("back_end_dti")
+    front_end_dti = dti.get("front_end_dti")
+    back_end_dti_combined = dti.get("back_end_dti_combined")
+    front_end_dti_combined = dti.get("front_end_dti_combined")
+    missing_inputs = dti.get("missing_inputs", [])
+
+    # --- Primary decision ---
+    primary_reasons: List[Dict[str, Any]] = []
+    primary_missing: List[str] = []
+    if back_end_dti is None:
+        primary_status = "UNKNOWN"
+        primary_missing = list(missing_inputs)
+        primary_reasons.append({
+            "rule": "DTI_BACK_END_MAX",
+            "status": "UNKNOWN",
+            "value": None,
+            "threshold": threshold,
+        })
+    elif back_end_dti <= threshold:
+        primary_status = "PASS"
+        primary_reasons.append({
+            "rule": "DTI_BACK_END_MAX",
+            "status": "PASS",
+            "value": back_end_dti,
+            "threshold": threshold,
+        })
+    else:
+        primary_status = "FAIL"
+        primary_reasons.append({
+            "rule": "DTI_BACK_END_MAX",
+            "status": "FAIL",
+            "value": back_end_dti,
+            "threshold": threshold,
+        })
+
+    # --- Combined decision ---
+    decision_combined = None
+    if back_end_dti_combined is not None:
+        combined_reasons: List[Dict[str, Any]] = []
+        if back_end_dti_combined <= threshold:
+            combined_status = "PASS"
+        else:
+            combined_status = "FAIL"
+        combined_reasons.append({
+            "rule": "DTI_BACK_END_MAX",
+            "status": combined_status,
+            "value": back_end_dti_combined,
+            "threshold": threshold,
+        })
+        decision_combined = {
+            "status": combined_status,
+            "reasons": combined_reasons,
+            "missing_inputs": [],
+        }
+
+    # --- Collect citations from income_analysis ---
+    cit_pitia: List[Dict[str, Any]] = []
+    pitia_obj = income_analysis.get("proposed_pitia")
+    if isinstance(pitia_obj, dict):
+        cit_pitia = pitia_obj.get("citations", [])
+
+    cit_liab: List[Dict[str, Any]] = []
+    mlt_obj = income_analysis.get("monthly_liabilities_total")
+    if isinstance(mlt_obj, dict):
+        cit_liab = mlt_obj.get("citations", [])
+
+    cit_income_primary: List[Dict[str, Any]] = []
+    mit_obj = income_analysis.get("monthly_income_total")
+    if isinstance(mit_obj, dict):
+        cit_income_primary = mit_obj.get("citations", [])
+
+    cit_income_combined: List[Dict[str, Any]] = []
+    mic_obj = income_analysis.get("monthly_income_total_combined")
+    if isinstance(mic_obj, dict):
+        cit_income_combined = mic_obj.get("citations", [])
+
+    # Build inputs snapshot
+    pitia_val = None
+    if isinstance(pitia_obj, dict) and pitia_obj.get("value") is not None:
+        pitia_val = pitia_obj["value"]
+    liab_val = None
+    if isinstance(mlt_obj, dict) and mlt_obj.get("value") is not None:
+        liab_val = mlt_obj["value"]
+    income_primary_val = None
+    if isinstance(mit_obj, dict) and mit_obj.get("value") is not None:
+        income_primary_val = mit_obj["value"]
+    income_combined_val = None
+    if isinstance(mic_obj, dict) and mic_obj.get("value") is not None:
+        income_combined_val = mic_obj["value"]
+
+    dti_primary_snapshot = None
+    if front_end_dti is not None or back_end_dti is not None:
+        dti_primary_snapshot = {"front_end": front_end_dti, "back_end": back_end_dti}
+    dti_combined_snapshot = None
+    if front_end_dti_combined is not None or back_end_dti_combined is not None:
+        dti_combined_snapshot = {
+            "front_end": front_end_dti_combined,
+            "back_end": back_end_dti_combined,
+        }
+
+    # Flatten citations for answer-level list (deduped)
+    all_cits: List[Dict[str, Any]] = []
+    seen_cids: set = set()
+    for source_cits in [cit_pitia, cit_liab, cit_income_primary, cit_income_combined]:
+        for c in source_cits:
+            cid = c.get("chunk_id", "")
+            if cid and cid not in seen_cids:
+                seen_cids.add(cid)
+                all_cits.append(c)
+
+    confidence = 0.9 if primary_status != "UNKNOWN" else 0.3
+
+    return {
+        "profile": "uw_decision",
+        "tenant_id": tenant_id,
+        "loan_id": loan_id,
+        "run_id": run_id,
+        "ruleset": {
+            "program": "Conventional",
+            "version": "v0.1-hardcoded",
+            "thresholds": {
+                "max_back_end_dti": threshold,
+                "max_front_end_dti": None,
+            },
+        },
+        "inputs": {
+            "pitia": pitia_val,
+            "liabilities_monthly": liab_val,
+            "income_monthly_primary": income_primary_val,
+            "income_monthly_combined": income_combined_val,
+            "dti_primary": dti_primary_snapshot,
+            "dti_combined": dti_combined_snapshot,
+        },
+        "decision_primary": {
+            "status": primary_status,
+            "reasons": primary_reasons,
+            "missing_inputs": primary_missing,
+        },
+        "decision_combined": decision_combined,
+        "citations": {
+            "pitia": cit_pitia,
+            "liabilities": cit_liab,
+            "income_primary": cit_income_primary,
+            "income_combined": cit_income_combined,
+        },
+        "confidence": confidence,
+        "_citations_flat": all_cits,
+    }
+
+
+def _format_uw_decision_md(decision: Dict[str, Any]) -> str:
+    """Format uw_decision result as human-readable markdown."""
+    ruleset = decision["ruleset"]
+    inp = decision["inputs"]
+    primary = decision["decision_primary"]
+    combined = decision.get("decision_combined")
+
+    lines = [
+        "# Underwriting Decision (Deterministic)",
+        "",
+        f"**Program:** {ruleset['program']}",
+        f"**Ruleset version:** {ruleset['version']}",
+        f"**Threshold:** back-end DTI <= {ruleset['thresholds']['max_back_end_dti']:.0%}",
+        "",
+        "## Primary Decision",
+        "",
+        f"**Status: {primary['status']}**",
+        "",
+    ]
+    for r in primary.get("reasons", []):
+        val_str = f"{r['value']:.4f} ({r['value'] * 100:.2f}%)" if r["value"] is not None else "null"
+        lines.append(f"- Rule `{r['rule']}`: {r['status']} "
+                     f"(value={val_str}, threshold={r['threshold']:.0%})")
+    if primary.get("missing_inputs"):
+        lines.append(f"- Missing inputs: {', '.join(primary['missing_inputs'])}")
+    lines.append("")
+
+    if combined is not None:
+        lines.extend([
+            "## Combined Decision (Multi-Business Self-Employed)",
+            "",
+            f"**Status: {combined['status']}**",
+            "",
+        ])
+        for r in combined.get("reasons", []):
+            val_str = (f"{r['value']:.4f} ({r['value'] * 100:.2f}%)"
+                       if r["value"] is not None else "null")
+            lines.append(f"- Rule `{r['rule']}`: {r['status']} "
+                         f"(value={val_str}, threshold={r['threshold']:.0%})")
+        lines.append("")
+
+    pitia_str = f"${inp['pitia']:,.2f}" if inp.get("pitia") is not None else "UNKNOWN"
+    liab_str = f"${inp['liabilities_monthly']:,.2f}" if inp.get("liabilities_monthly") is not None else "UNKNOWN"
+    inc_str = f"${inp['income_monthly_primary']:,.2f}" if inp.get("income_monthly_primary") is not None else "UNKNOWN"
+    lines.extend([
+        "## Inputs",
+        "",
+        f"- PITIA: {pitia_str}",
+        f"- Liabilities (monthly): {liab_str}",
+        f"- Income (primary): {inc_str}",
+    ])
+    if inp.get("income_monthly_combined") is not None:
+        lines.append(f"- Income (combined): ${inp['income_monthly_combined']:,.2f}")
+    dti_p = inp.get("dti_primary")
+    if dti_p:
+        if dti_p.get("front_end") is not None:
+            lines.append(f"- Front-end DTI (primary): {dti_p['front_end']:.4f} "
+                         f"({dti_p['front_end'] * 100:.2f}%)")
+        if dti_p.get("back_end") is not None:
+            lines.append(f"- Back-end DTI (primary): {dti_p['back_end']:.4f} "
+                         f"({dti_p['back_end'] * 100:.2f}%)")
+    dti_c = inp.get("dti_combined")
+    if dti_c:
+        if dti_c.get("front_end") is not None:
+            lines.append(f"- Front-end DTI (combined): {dti_c['front_end']:.4f} "
+                         f"({dti_c['front_end'] * 100:.2f}%)")
+        if dti_c.get("back_end") is not None:
+            lines.append(f"- Back-end DTI (combined): {dti_c['back_end']:.4f} "
+                         f"({dti_c['back_end'] * 100:.2f}%)")
+    lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+def _synthesize_uw_decision_answer(decision: Dict[str, Any]) -> str:
+    """Synthesize answer text from uw_decision for answer.json."""
+    primary = decision["decision_primary"]
+    parts = [
+        f"Underwriting Decision ({decision['ruleset']['version']}): "
+        f"{primary['status']}"
+    ]
+    for r in primary.get("reasons", []):
+        val_str = (f"{r['value'] * 100:.2f}%" if r["value"] is not None else "null")
+        parts.append(f"  {r['rule']}: {r['status']} "
+                     f"(value={val_str}, threshold={r['threshold']:.0%})")
+    combined = decision.get("decision_combined")
+    if combined is not None:
+        parts.append(f"Combined: {combined['status']}")
+        for r in combined.get("reasons", []):
+            val_str = (f"{r['value'] * 100:.2f}%" if r["value"] is not None else "null")
+            parts.append(f"  {r['rule']}: {r['status']} "
+                         f"(value={val_str}, threshold={r['threshold']:.0%})")
+    if primary.get("missing_inputs"):
+        parts.append(f"Missing inputs: {', '.join(primary['missing_inputs'])}")
+    return "\n".join(parts)
+
+
 def _unwrap_nested_json(obj: Dict[str, Any]) -> Dict[str, Any]:
     """
     Post-parse normalization:
@@ -2014,11 +2309,7 @@ def main(argv=None) -> None:
     staging = ctx.analyze_staging_run_root
     final = ctx.analyze_final_run_root
 
-    # Rerun policy: overwrite existing analysis for same run_id
-    if final.exists():
-        import shutil
-        shutil.rmtree(final)
-
+    # Create staging structure first (needed for profile-aware preservation)
     ensure_dir(staging)
     meta_dir = staging / "_meta"
     out_dir = staging / "outputs"
@@ -2026,6 +2317,26 @@ def main(argv=None) -> None:
     ensure_dir(meta_dir)
     ensure_dir(out_dir)
     ensure_dir(profiles_dir)
+
+    # Profile-aware rerun: preserve profiles NOT being overwritten in this invocation.
+    # This allows uw_decision to read income_analysis outputs from a prior run.
+    import shutil
+    current_profiles = set(profiles)
+    _prev_run_meta = None
+    if final.exists():
+        existing_profiles_dir = final / "outputs" / "profiles"
+        if existing_profiles_dir.exists():
+            for existing_prof in existing_profiles_dir.iterdir():
+                if existing_prof.is_dir() and existing_prof.name not in current_profiles:
+                    dest = profiles_dir / existing_prof.name
+                    if not dest.exists():
+                        shutil.copytree(str(existing_prof), str(dest))
+                        _dprint(f"[DEBUG] preserved profile from previous run: "
+                                f"{existing_prof.name}")
+        existing_meta = final / "_meta" / "analysis_run.json"
+        if existing_meta.exists():
+            _prev_run_meta = json.loads(existing_meta.read_text(encoding="utf-8"))
+        shutil.rmtree(final)
 
     run_meta: List[Dict[str, Any]] = []
 
@@ -2066,6 +2377,74 @@ def main(argv=None) -> None:
 
         is_uw = (profile == "uw_conditions")
         is_income = (profile == "income_analysis")
+        is_uw_decision = (profile == "uw_decision")
+
+        # --- uw_decision: purely deterministic, no LLM needed ---
+        if is_uw_decision:
+            decision_data = _resolve_uw_decision_inputs(profiles_dir)
+            decision_result = _build_uw_decision(
+                income_analysis=decision_data["income_analysis"],
+                dti=decision_data["dti"],
+                tenant_id=args.tenant_id,
+                loan_id=args.loan_id,
+                run_id=ctx.run_id,
+            )
+            decision_md_text = _format_uw_decision_md(decision_result)
+            answer_text = _synthesize_uw_decision_answer(decision_result)
+            flat_cits = decision_result.pop("_citations_flat", [])
+            confidence = decision_result["confidence"]
+
+            _dprint(f"[DEBUG] uw_decision: primary={decision_result['decision_primary']['status']} "
+                    f"combined={decision_result['decision_combined']['status'] if decision_result.get('decision_combined') else 'N/A'}")
+
+            # Write profile artifacts
+            prof_out = profiles_dir / profile
+            ensure_dir(prof_out)
+            atomic_write_json(prof_out / "decision.json", decision_result)
+            atomic_write_text(prof_out / "decision.md", decision_md_text)
+
+            # Standard profile framework files
+            answer_md_lines = [
+                f"# Answer — profile: {profile}",
+                "",
+                f"**Question:** {question}",
+                "",
+                answer_text,
+                "",
+                "## Citations",
+            ]
+            citations_lines: List[str] = []
+            for c in flat_cits:
+                cid = c.get("chunk_id", "")
+                quote = (c.get("quote", "") or "").strip()
+                answer_md_lines.append(f"- {cid}: {quote[:200]}")
+                citations_lines.append(
+                    json.dumps({"chunk_id": cid, "quote": quote}, ensure_ascii=False))
+
+            atomic_write_text(prof_out / "answer.md",
+                              "\n".join(answer_md_lines) + "\n")
+            atomic_write_json(prof_out / "answer.json", {
+                "answer": answer_text,
+                "citations": flat_cits,
+                "confidence": confidence,
+                "question": question,
+                "profile": profile,
+                "retrieval_pack": None,
+                "retrieval_pack_source": "none (deterministic)",
+            })
+            atomic_write_text(prof_out / "citations.jsonl",
+                              "\n".join(citations_lines) + ("\n" if citations_lines else ""))
+
+            run_meta.append({
+                "profile": profile,
+                "question": question,
+                "retrieval_pack": None,
+                "retrieval_pack_source": "none (deterministic)",
+                "evidence_chars": 0,
+                "ollama_model": "none (deterministic)",
+                "confidence": confidence,
+            })
+            continue  # Skip LLM call, evidence loading, etc.
 
         # If we have no evidence, return Not found.
         if not evidence_block.strip():
@@ -2405,6 +2784,13 @@ def main(argv=None) -> None:
             "ollama_model": args.llm_model,
             "confidence": confidence,
         })
+
+    # Merge preserved profile metadata from previous run
+    if _prev_run_meta and _prev_run_meta.get("profiles"):
+        current_profile_names = {m["profile"] for m in run_meta}
+        for prev_entry in _prev_run_meta["profiles"]:
+            if prev_entry.get("profile") not in current_profile_names:
+                run_meta.append(prev_entry)
 
     atomic_write_json(meta_dir / "analysis_run.json", {
         "tenant_id": args.tenant_id,

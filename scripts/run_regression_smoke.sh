@@ -35,6 +35,8 @@ INCOME_MAX_PER_FILE="${INCOME_MAX_PER_FILE:-12}"
 INCOME_REQUIRED_KEYWORDS="${INCOME_REQUIRED_KEYWORDS:-Total Monthly Payments}"
 INCOME_REQUIRED_KEYWORDS_2="${INCOME_REQUIRED_KEYWORDS_2:-Profit and Loss}"
 EXPECT_DTI="${EXPECT_DTI:-0}"
+RUN_UW_DECISION="${RUN_UW_DECISION:-0}"
+UW_DECISION_QUERY="${UW_DECISION_QUERY:-Deterministic underwriting decision based on DTI thresholds.}"
 
 # ---------------------------------------------------------------------------
 # Derived paths
@@ -44,6 +46,7 @@ RP_PATH="${BASE}/retrieve/${RUN_ID}/retrieval_pack.json"
 ANALYZE_ROOT="${BASE}/${RUN_ID}/outputs/profiles/default"
 UW_ROOT="${BASE}/${RUN_ID}/outputs/profiles/uw_conditions"
 INCOME_ROOT="${BASE}/${RUN_ID}/outputs/profiles/income_analysis"
+UW_DECISION_ROOT="${BASE}/${RUN_ID}/outputs/profiles/uw_decision"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 FAIL=0
@@ -558,6 +561,85 @@ else:
 fi
 
 # ---------------------------------------------------------------------------
+# K) Optional: uw_decision profile (requires income_analysis)
+# ---------------------------------------------------------------------------
+UW_DEC_PRIMARY="skip"
+UW_DEC_COMBINED="skip"
+if [ "${RUN_UW_DECISION}" = "1" ]; then
+    echo "=== Step12: uw_decision (deterministic) ==="
+    python3 "${SCRIPT_DIR}/step12_analyze.py" \
+        --tenant-id "$TENANT_ID" \
+        --loan-id "$LOAN_ID" \
+        --run-id "$RUN_ID" \
+        --query "$UW_DECISION_QUERY" \
+        --analysis-profile uw_decision \
+        --ollama-url "$OLLAMA_URL" \
+        --llm-model "$MISTRAL_MODEL" \
+        --llm-temperature 0 \
+        --llm-max-tokens 1 \
+        --ollama-timeout 10 \
+        --no-auto-retrieve \
+        --debug
+
+    if [ $? -ne 0 ]; then
+        fail "Step12 uw_decision exited with error"
+    else
+        echo "=== Assert: uw_decision outputs ==="
+        UW_DECISION_JSON="${UW_DECISION_ROOT}/decision.json"
+        if [ ! -f "$UW_DECISION_JSON" ]; then
+            fail "uw_decision: decision.json not found at ${UW_DECISION_JSON}"
+        else
+            UW_DEC_CHECK=$(python3 -c "
+import json, sys
+
+dj = json.load(open('${UW_DECISION_JSON}'))
+primary = dj.get('decision_primary', {})
+p_status = primary.get('status')
+if p_status not in ('PASS', 'FAIL', 'UNKNOWN'):
+    print(f'FAIL: decision_primary.status={p_status!r} not in (PASS, FAIL, UNKNOWN)')
+    sys.exit(1)
+
+version = dj.get('ruleset', {}).get('version')
+if version != 'v0.1-hardcoded':
+    print(f'FAIL: ruleset.version={version!r} expected v0.1-hardcoded')
+    sys.exit(1)
+
+combined = dj.get('decision_combined')
+c_status = 'N/A'
+if combined is not None:
+    c_status = combined.get('status', 'N/A')
+    if c_status not in ('PASS', 'FAIL', 'UNKNOWN'):
+        print(f'FAIL: decision_combined.status={c_status!r} not valid')
+        sys.exit(1)
+
+cits = dj.get('citations', {})
+for key in ('pitia', 'liabilities', 'income_primary'):
+    if key not in cits:
+        print(f'FAIL: citations.{key} missing')
+        sys.exit(1)
+
+print(f'primary={p_status} combined={c_status}')
+sys.exit(0)
+")
+            if [ $? -ne 0 ]; then
+                fail "uw_decision: decision.json validation failed: ${UW_DEC_CHECK}"
+            else
+                UW_DEC_PRIMARY=$(echo "$UW_DEC_CHECK" | sed -n 's/primary=\([^ ]*\).*/\1/p')
+                UW_DEC_COMBINED=$(echo "$UW_DEC_CHECK" | sed -n 's/.*combined=\(.*\)/\1/p')
+                echo "  uw_decision: ${UW_DEC_CHECK}"
+            fi
+        fi
+
+        # Verify standard profile files exist
+        for f in answer.json answer.md decision.md; do
+            if [ ! -f "${UW_DECISION_ROOT}/${f}" ]; then
+                fail "uw_decision: ${f} not found"
+            fi
+        done
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
@@ -576,6 +658,9 @@ else
     if [ "${RUN_INCOME_ANALYSIS}" = "1" ]; then
         echo "  income_analysis  : income=${INCOME_ITEMS_COUNT} liab=${INCOME_LIAB_COUNT} pitia=${INCOME_PITIA}"
         echo "  dti              : ${INCOME_DTI}"
+    fi
+    if [ "${RUN_UW_DECISION}" = "1" ]; then
+        echo "  uw_decision      : primary=${UW_DEC_PRIMARY} combined=${UW_DEC_COMBINED}"
     fi
     exit 0
 fi

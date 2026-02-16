@@ -1,6 +1,6 @@
 # MortgageDocAI — Project Status
 
-**Last Updated:** 2026-02-12
+**Last Updated:** 2026-02-15
 
 ## Current phase & AI context
 
@@ -518,6 +518,8 @@ RUN_ID=2026-02-12T100000Z bash scripts/run_regression_smoke.sh
 | `INCOME_MAX_TOKENS` | `650` | Max tokens for income_analysis LLM call |
 | `INCOME_EVIDENCE_MAX_CHARS` | `4500` | Max evidence chars for income_analysis |
 | `EXPECT_DTI` | `0` | Set to `1` to assert at least one DTI ratio is non-null |
+| `RUN_UW_DECISION` | `0` | Set to `1` to run and validate the `uw_decision` profile |
+| `UW_DECISION_QUERY` | `Deterministic underwriting decision...` | Query for uw_decision (ignored by deterministic handler) |
 
 ### Optional: uw_conditions validation
 
@@ -529,6 +531,18 @@ When enabled, the smoke test additionally:
 5. Runs Step12 with `--analysis-profile uw_conditions` (mistral)
 6. Asserts `conditions.json` exists with valid schema
 7. Verifies every condition citation `chunk_id` exists in the retrieval pack
+
+### Optional: uw_decision validation
+
+```bash
+RUN_UW_DECISION=1 bash scripts/run_regression_smoke.sh
+```
+
+When enabled, the smoke test additionally:
+8. Runs Step12 with `--analysis-profile uw_decision` (no LLM — deterministic)
+9. Asserts `decision.json` exists with valid schema and `decision_primary.status` ∈ {PASS, FAIL, UNKNOWN}
+10. Validates `ruleset.version = v0.1-hardcoded` and citation structure
+11. Asserts `answer.json`, `answer.md`, `decision.md` exist
 
 ---
 
@@ -897,3 +911,96 @@ All existing primary fields (`monthly_income_total`, `front_end_dti`, `back_end_
 
 - `INCOME_RETRIEVE_QUERY` enhanced with: `Gross Monthly Income`, `Base Employment Income`, `qualifying income`, `Total Monthly Income`, `Desktop Underwriter`, `DU Findings`, `Profit and Loss`, `Net Income`, `Total Income`
 - `--required-keywords "Profit and Loss"` (second group) force-includes P&L chunks via Step13 multi-group injection
+
+---
+
+## Step12 Profile: uw_decision (2026-02-15)
+
+Deterministic underwriting decision simulation. When `--analysis-profile uw_decision` is used, Step12 reads the already-computed `income_analysis.json` + `dti.json` from the `income_analysis` profile and applies hardcoded DTI threshold rules. No LLM call is needed — purely deterministic.
+
+### Prerequisites
+
+The `income_analysis` profile must have run first for the same `run_id`. The uw_decision handler reads from `outputs/profiles/income_analysis/income_analysis.json` and `outputs/profiles/income_analysis/dti.json`.
+
+### Profile-aware rerun preservation
+
+When running `uw_decision` as a separate invocation (not in the same command as `income_analysis`), the rerun-wipe logic preserves profiles not being overwritten. Before wiping the final directory, non-current profiles are copied from `final` into `staging` via `shutil.copytree`. This ensures `income_analysis` outputs survive when only `uw_decision` runs.
+
+### Decision rules (v0.1-hardcoded)
+
+| Rule | Threshold | Outcome |
+|------|-----------|---------|
+| `back_end_dti <= 0.45` | 45% | PASS |
+| `back_end_dti > 0.45` | 45% | FAIL |
+| `back_end_dti` is null | — | UNKNOWN |
+
+Applied independently for both primary and combined (if available) scenarios.
+
+### Output files
+
+Written to `outputs/profiles/uw_decision/`:
+
+- **decision.json** — Full decision contract:
+  ```json
+  {
+    "profile": "uw_decision",
+    "tenant_id": "...", "loan_id": "...", "run_id": "...",
+    "ruleset": {
+      "program": "Conventional",
+      "version": "v0.1-hardcoded",
+      "thresholds": {"max_back_end_dti": 0.45, "max_front_end_dti": null}
+    },
+    "inputs": {
+      "pitia": 3203.31, "liabilities_monthly": 582.00,
+      "income_monthly_primary": 12524.49,
+      "income_monthly_combined": 21398.21,
+      "dti_primary": {"front_end": 0.2558, "back_end": 0.3022},
+      "dti_combined": {"front_end": 0.1497, "back_end": 0.1769}
+    },
+    "decision_primary": {
+      "status": "PASS",
+      "reasons": [{"rule": "DTI_BACK_END_MAX", "status": "PASS", "value": 0.3022, "threshold": 0.45}],
+      "missing_inputs": []
+    },
+    "decision_combined": { "status": "PASS", ... },
+    "citations": {
+      "pitia": [...], "liabilities": [...],
+      "income_primary": [...], "income_combined": [...]
+    },
+    "confidence": 0.95
+  }
+  ```
+- **decision.md** — Human-readable markdown summary
+- **answer.json / answer.md** — Standard profile outputs with synthesized answer text
+- **citations.jsonl** — Flattened citation list from income_analysis sources
+
+### Confidence calibration
+
+- Both primary and combined decisions are PASS/FAIL → 0.95
+- At least one decision is UNKNOWN → 0.7
+- No valid DTI data → 0.4
+
+### Smoke test
+
+```bash
+RUN_UW_DECISION=1 RUN_ID=2026-02-13T073441Z bash scripts/run_regression_smoke.sh
+
+# Or with income_analysis + uw_decision together:
+RUN_INCOME_ANALYSIS=1 RUN_UW_DECISION=1 EXPECT_DTI=1 RUN_ID=2026-02-13T073441Z bash scripts/run_regression_smoke.sh
+```
+
+### Configurable env vars
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RUN_UW_DECISION` | `0` | Set to `1` to run uw_decision profile |
+| `UW_DECISION_QUERY` | `Deterministic underwriting decision...` | Query text (ignored by deterministic handler) |
+
+### Assertions
+
+- `decision.json` exists with valid schema
+- `decision_primary.status` ∈ {PASS, FAIL, UNKNOWN}
+- `decision_combined.status` ∈ {PASS, FAIL, UNKNOWN} (if present)
+- `ruleset.version` = `v0.1-hardcoded`
+- `citations` has `pitia`, `liabilities`, `income_primary` keys
+- `answer.json`, `answer.md`, `decision.md` exist
