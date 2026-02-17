@@ -8,7 +8,18 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 TENANT_ID="${TENANT_ID:-peak}"
 LOAN_ID="${LOAN_ID:-16271681}"
-RUN_ID="${RUN_ID:-2026-02-11T054835Z}"
+if [ -z "${RUN_ID:-}" ]; then
+    _AUTO_RUN_DIR="/mnt/nas_apps/nas_chunk/tenants/${TENANT_ID}/loans/${LOAN_ID}"
+    RUN_ID=$(ls -1 "$_AUTO_RUN_DIR" 2>/dev/null \
+        | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z$' \
+        | sort \
+        | tail -1) || true
+    if [ -z "$RUN_ID" ]; then
+        echo "FATAL: no RUN_ID set and no timestamped run dirs found under ${_AUTO_RUN_DIR}" >&2
+        exit 1
+    fi
+    echo "Auto-selected RUN_ID=${RUN_ID} (latest in ${_AUTO_RUN_DIR})"
+fi
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
 EMBED_OFFLINE="${EMBED_OFFLINE:-1}"
 TOP_K="${TOP_K:-80}"
@@ -35,6 +46,7 @@ INCOME_MAX_PER_FILE="${INCOME_MAX_PER_FILE:-12}"
 INCOME_REQUIRED_KEYWORDS="${INCOME_REQUIRED_KEYWORDS:-Total Monthly Payments}"
 INCOME_REQUIRED_KEYWORDS_2="${INCOME_REQUIRED_KEYWORDS_2:-Profit and Loss}"
 EXPECT_DTI="${EXPECT_DTI:-0}"
+MAX_DROPPED_CHUNKS="${MAX_DROPPED_CHUNKS:-999999}"
 RUN_UW_DECISION="${RUN_UW_DECISION:-0}"
 UW_DECISION_QUERY="${UW_DECISION_QUERY:-Deterministic underwriting decision based on DTI thresholds.}"
 
@@ -43,7 +55,8 @@ UW_DECISION_QUERY="${UW_DECISION_QUERY:-Deterministic underwriting decision base
 # ---------------------------------------------------------------------------
 BASE="/mnt/nas_apps/nas_analyze/tenants/${TENANT_ID}/loans/${LOAN_ID}"
 RP_PATH="${BASE}/retrieve/${RUN_ID}/retrieval_pack.json"
-ANALYZE_ROOT="${BASE}/${RUN_ID}/outputs/profiles/default"
+PHI3_ROOT="${BASE}/${RUN_ID}/outputs/profiles/default_phi3"
+MISTRAL_ROOT="${BASE}/${RUN_ID}/outputs/profiles/default_mistral"
 UW_ROOT="${BASE}/${RUN_ID}/outputs/profiles/uw_conditions"
 INCOME_ROOT="${BASE}/${RUN_ID}/outputs/profiles/income_analysis"
 UW_DECISION_ROOT="${BASE}/${RUN_ID}/outputs/profiles/uw_decision"
@@ -55,6 +68,11 @@ fail() {
     echo "FAIL: $1" >&2
     FAIL=1
 }
+
+# ---------------------------------------------------------------------------
+# Pre-flight: materialize autofs mount (if applicable)
+# ---------------------------------------------------------------------------
+ls /mnt/source_loans >/dev/null 2>&1 || true
 
 # ---------------------------------------------------------------------------
 # A) Build retrieval pack
@@ -103,7 +121,7 @@ python3 "${SCRIPT_DIR}/step12_analyze.py" \
     --loan-id "$LOAN_ID" \
     --run-id "$RUN_ID" \
     --query "$QUERY_ANALYZE" \
-    --analysis-profile default \
+    --analysis-profile default_phi3 \
     --ollama-url "$OLLAMA_URL" \
     --llm-model "$PHI3_MODEL" \
     --llm-temperature 0 \
@@ -116,9 +134,9 @@ python3 "${SCRIPT_DIR}/step12_analyze.py" \
 # D) Assert phi3 outputs exist and citations.jsonl > 0
 # ---------------------------------------------------------------------------
 echo "=== Assert: phi3 outputs ==="
-PHI3_ANSWER="${ANALYZE_ROOT}/answer.json"
-PHI3_CITATIONS="${ANALYZE_ROOT}/citations.jsonl"
-PHI3_RAW="${ANALYZE_ROOT}/llm_raw.txt"
+PHI3_ANSWER="${PHI3_ROOT}/answer.json"
+PHI3_CITATIONS="${PHI3_ROOT}/citations.jsonl"
+PHI3_RAW="${PHI3_ROOT}/llm_raw.txt"
 
 if [ ! -f "$PHI3_ANSWER" ]; then
     fail "phi3: answer.json not found at ${PHI3_ANSWER}"
@@ -148,7 +166,7 @@ python3 "${SCRIPT_DIR}/step12_analyze.py" \
     --loan-id "$LOAN_ID" \
     --run-id "$RUN_ID" \
     --query "$QUERY_ANALYZE" \
-    --analysis-profile default \
+    --analysis-profile default_mistral \
     --ollama-url "$OLLAMA_URL" \
     --llm-model "$MISTRAL_MODEL" \
     --llm-temperature 0 \
@@ -161,9 +179,9 @@ python3 "${SCRIPT_DIR}/step12_analyze.py" \
 # F) Assert mistral outputs exist and citations.jsonl > 0
 # ---------------------------------------------------------------------------
 echo "=== Assert: mistral outputs ==="
-MISTRAL_ANSWER="${ANALYZE_ROOT}/answer.json"
-MISTRAL_CITATIONS="${ANALYZE_ROOT}/citations.jsonl"
-MISTRAL_RAW="${ANALYZE_ROOT}/llm_raw.txt"
+MISTRAL_ANSWER="${MISTRAL_ROOT}/answer.json"
+MISTRAL_CITATIONS="${MISTRAL_ROOT}/citations.jsonl"
+MISTRAL_RAW="${MISTRAL_ROOT}/llm_raw.txt"
 
 if [ ! -f "$MISTRAL_ANSWER" ]; then
     fail "mistral: answer.json not found at ${MISTRAL_ANSWER}"
@@ -200,24 +218,23 @@ for ch in (rp.get('retrieved_chunks') or []):
 
 errors = []
 
-# Check answer.json for the last model run (mistral overwrites phi3 at same profile)
-# We check the citations that are actually in the file right now
-answer = json.load(open('${ANALYZE_ROOT}/answer.json'))
-for c in (answer.get('citations') or []):
-    cid = c.get('chunk_id', '')
-    if cid and cid not in rp_ids:
-        errors.append(f'answer.json: cited chunk_id {cid} NOT in retrieval_pack')
-
-# Also verify citations.jsonl
-with open('${ANALYZE_ROOT}/citations.jsonl') as f:
-    for line in f:
-        line = line.strip()
-        if not line:
-            continue
-        c = json.loads(line)
+# Check both phi3 and mistral profiles (separate output dirs)
+for profile_root in ['${PHI3_ROOT}', '${MISTRAL_ROOT}']:
+    answer = json.load(open(profile_root + '/answer.json'))
+    for c in (answer.get('citations') or []):
         cid = c.get('chunk_id', '')
         if cid and cid not in rp_ids:
-            errors.append(f'citations.jsonl: cited chunk_id {cid} NOT in retrieval_pack')
+            errors.append(f'{profile_root}: cited chunk_id {cid} NOT in retrieval_pack')
+
+    with open(profile_root + '/citations.jsonl') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            c = json.loads(line)
+            cid = c.get('chunk_id', '')
+            if cid and cid not in rp_ids:
+                errors.append(f'{profile_root}: cited chunk_id {cid} NOT in retrieval_pack')
 
 if errors:
     for e in errors:
@@ -328,7 +345,7 @@ INCOME_DTI="skip"
 INCOME_PITIA="skip"
 if [ "${RUN_INCOME_ANALYSIS}" = "1" ]; then
     echo "=== Step13: building income-focused retrieval pack ==="
-    python3 "${SCRIPT_DIR}/step13_build_retrieval_pack.py" \
+    _STEP13_INC_OUT=$(python3 "${SCRIPT_DIR}/step13_build_retrieval_pack.py" \
         --tenant-id "$TENANT_ID" \
         --loan-id "$LOAN_ID" \
         --run-id "$RUN_ID" \
@@ -339,7 +356,18 @@ if [ "${RUN_INCOME_ANALYSIS}" = "1" ]; then
         --required-keywords "$INCOME_REQUIRED_KEYWORDS" \
         --required-keywords "$INCOME_REQUIRED_KEYWORDS_2" \
         --debug \
-        ${OFFLINE_FLAG}
+        ${OFFLINE_FLAG} 2>&1)
+    echo "$_STEP13_INC_OUT"
+
+    # Gate: dropped chunk_ids must not exceed MAX_DROPPED_CHUNKS
+    _DROPPED_COUNT=$(echo "$_STEP13_INC_OUT" \
+        | grep -o '[0-9]*/[0-9]* chunk_ids not found' \
+        | sed 's|/.*||' \
+        | tail -1) || true
+    _DROPPED_COUNT="${_DROPPED_COUNT:-0}"
+    if [ "$_DROPPED_COUNT" -gt "$MAX_DROPPED_CHUNKS" ]; then
+        fail "income Step13: dropped ${_DROPPED_COUNT} chunk_ids (max allowed: ${MAX_DROPPED_CHUNKS})"
+    fi
 
     echo "=== Step12: income_analysis (mistral) ==="
     python3 "${SCRIPT_DIR}/step12_analyze.py" \

@@ -1054,3 +1054,52 @@ RUN_INCOME_ANALYSIS=1 RUN_UW_DECISION=1 EXPECT_DTI=1 RUN_ID=2026-02-13T073441Z b
 - `citations` has `pitia`, `liabilities`, `income_primary` keys
 - `answer.json`, `answer.md`, `decision.md` exist
 - `outputs/_meta/version.json` exists
+
+---
+
+## How to run production (v0.7)
+
+### Preconditions
+
+- Python venv activated: `source /opt/mortgagedocai/venv/bin/activate`
+- Ollama running: `systemctl status ollama` (models: mistral, phi3)
+- Qdrant running: `systemctl status qdrant` (http://localhost:6333)
+- NAS source loans mounted read-only at `/mnt/source_loans`
+
+### One-shot pipeline run
+
+```bash
+python3 scripts/run_loan_pipeline.py \
+  --tenant-id peak \
+  --loan-id 16271681 \
+  --source-path "/mnt/source_loans/5-Borrowers TBD/Walters, Bill [Loan 16271681]" \
+  --qdrant-url http://localhost:6333 \
+  --embedding-device cpu
+```
+
+### Run income_analysis + uw_decision
+
+```bash
+RUN_INCOME_ANALYSIS=1 RUN_UW_DECISION=1 EXPECT_DTI=1 \
+  RUN_ID=<RUN_ID> bash scripts/run_regression_smoke.sh
+```
+
+Replace `<RUN_ID>` with the run_id from the pipeline output (e.g. `2026-02-13T073441Z`).
+
+### Enable per-tenant policy thresholds
+
+```bash
+mkdir -p /mnt/nas_apps/nas_analyze/tenants/<tenant>/policy
+cp /opt/mortgagedocai/policy_templates/uw_thresholds.example.json \
+   /mnt/nas_apps/nas_analyze/tenants/<tenant>/policy/uw_thresholds.json
+# Edit thresholds as needed; policy_source will report "file" when loaded.
+```
+
+### Output locations
+
+| Output | Path |
+|--------|------|
+| income_analysis | `outputs/profiles/income_analysis/` |
+| uw_decision | `outputs/profiles/uw_decision/decision.json` + `decision.md` |
+| version stamp | `outputs/_meta/version.json` |
+| retrieval pack | `nas_analyze/.../retrieve/<run_id>/retrieval_pack.json` |

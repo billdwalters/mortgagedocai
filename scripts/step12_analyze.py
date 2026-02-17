@@ -1771,7 +1771,7 @@ def _build_version_info(policy: Dict[str, Any]) -> Dict[str, Any]:
     except (OSError, subprocess.TimeoutExpired):
         pass
     return {
-        "generated_at_utc": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "git": {"commit": git_commit, "dirty": git_dirty},
         "schemas": {"uw_decision": "v0.7"},
         "policy": {
@@ -1966,7 +1966,7 @@ def _format_uw_decision_md(decision: Dict[str, Any]) -> str:
         f"| Tenant | {decision['tenant_id']} |",
         f"| Loan | {decision['loan_id']} |",
         f"| Run | {decision['run_id']} |",
-        f"| Generated | {datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')} |",
+        f"| Generated | {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} |",
         "",
         f"**Program:** {ruleset['program']}",
         f"**Ruleset version:** {ruleset['version']}",
