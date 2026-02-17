@@ -370,7 +370,7 @@ if [ "${RUN_INCOME_ANALYSIS}" = "1" ]; then
         --max-per-file "$INCOME_MAX_PER_FILE" \
         --required-keywords "$INCOME_REQUIRED_KEYWORDS" \
         --required-keywords "$INCOME_REQUIRED_KEYWORDS_2" \
-        --debug \
+        ${STEP13_DEBUG_FLAG} \
         ${OFFLINE_FLAG} 2>&1)
     echo "$_STEP13_INC_OUT"
 
