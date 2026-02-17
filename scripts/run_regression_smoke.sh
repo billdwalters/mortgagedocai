@@ -58,6 +58,7 @@ MAX_DROPPED_CHUNKS="${MAX_DROPPED_CHUNKS:-999999}"
 RUN_LLM="${RUN_LLM:-1}"
 RUN_UW_DECISION="${RUN_UW_DECISION:-0}"
 UW_DECISION_QUERY="${UW_DECISION_QUERY:-Deterministic underwriting decision based on DTI thresholds.}"
+SMOKE_DEBUG="${SMOKE_DEBUG:-0}"
 
 # ---------------------------------------------------------------------------
 # Derived paths
@@ -91,6 +92,8 @@ OFFLINE_FLAG=""
 if [ "${EMBED_OFFLINE}" = "1" ]; then
     OFFLINE_FLAG="--offline-embeddings"
 fi
+STEP13_DEBUG_FLAG=""
+if [ "${SMOKE_DEBUG}" = "1" ]; then STEP13_DEBUG_FLAG="--debug"; fi
 
 python3 "${SCRIPT_DIR}/step13_build_retrieval_pack.py" \
     --tenant-id "$TENANT_ID" \
@@ -99,7 +102,8 @@ python3 "${SCRIPT_DIR}/step13_build_retrieval_pack.py" \
     --query "$QUERY_RETRIEVE" \
     --out-run-id "$RUN_ID" \
     --top-k "$TOP_K" \
-    ${OFFLINE_FLAG}
+    ${OFFLINE_FLAG} \
+    ${STEP13_DEBUG_FLAG}
 
 # ---------------------------------------------------------------------------
 # B) Assert retrieval_pack.json exists and retrieved_chunks > 0
