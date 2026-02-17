@@ -23,6 +23,7 @@ from lib import (
     atomic_write_text,
     atomic_rename_dir,
     ensure_dir,
+    sha256_file,
 )
 
 _DEBUG = False  # set by main() from --debug flag
@@ -2484,6 +2485,22 @@ def main(argv=None) -> None:
         }
         allowed_chunk_ids.discard("")
 
+        # Retrieval provenance — hash from bytes on disk
+        _rp_sha256: Optional[str] = None
+        _rp_abspath: Optional[str] = None
+        if rp_path and rp_path.exists():
+            try:
+                _rp_sha256 = sha256_file(rp_path)
+                _rp_abspath = str(rp_path.resolve())
+            except OSError:
+                import sys as _sys
+                print(f"WARNING: could not hash retrieval_pack: {rp_path}", file=_sys.stderr)
+        _rp_provenance = {
+            "retrieval_pack_sha256": _rp_sha256,
+            "retrieval_pack_path": _rp_abspath,
+            "retrieval_pack_run_id": ctx.run_id,
+        }
+
         is_uw = (profile == "uw_conditions")
         is_income = (profile == "income_analysis")
         is_uw_decision = (profile == "uw_decision")
@@ -2512,6 +2529,7 @@ def main(argv=None) -> None:
             # Write profile artifacts
             prof_out = profiles_dir / profile
             ensure_dir(prof_out)
+            decision_result.update(_rp_provenance)
             atomic_write_json(prof_out / "decision.json", decision_result)
             atomic_write_text(prof_out / "decision.md", decision_md_text)
 
@@ -2552,6 +2570,12 @@ def main(argv=None) -> None:
             ensure_dir(version_meta_dir)
             atomic_write_json(version_meta_dir / "version.json",
                               _build_version_info(policy))
+
+            # Per-profile version.json with retrieval provenance
+            atomic_write_json(prof_out / "version.json", {
+                **_build_version_info(policy),
+                **_rp_provenance,
+            })
 
             run_meta.append({
                 "profile": profile,
@@ -2840,6 +2864,7 @@ def main(argv=None) -> None:
             citations_lines.append(json.dumps({"chunk_id": cid, "quote": quote}, ensure_ascii=False))
 
         atomic_write_text(prof_out / "answer.md", "\n".join(answer_md) + "\n")
+        _answer_extra = _rp_provenance if is_income else {}
         atomic_write_json(prof_out / "answer.json", {
             "answer": answer,
             "citations": citations,
@@ -2848,6 +2873,7 @@ def main(argv=None) -> None:
             "profile": profile,
             "retrieval_pack": str(rp_path) if rp_path else None,
             "retrieval_pack_source": rp_source,
+            **_answer_extra,
         })
         atomic_write_text(prof_out / "citations.jsonl", "\n".join(citations_lines) + ("\n" if citations_lines else ""))
 
@@ -2870,9 +2896,18 @@ def main(argv=None) -> None:
                 "monthly_income_total": income_result.get("monthly_income_total"),
                 "monthly_income_total_combined": income_result.get("monthly_income_total_combined"),
                 "confidence": income_result["confidence"],
+                **_rp_provenance,
             })
         if dti_result is not None:
+            dti_result.update(_rp_provenance)
             atomic_write_json(prof_out / "dti.json", dti_result)
+
+        if is_income:
+            atomic_write_json(prof_out / "version.json", {
+                "generated_at_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "profile": "income_analysis",
+                **_rp_provenance,
+            })
 
         # Primary outputs (first query/profile) go to contracted filenames
         if idx == 0:
