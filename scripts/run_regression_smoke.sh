@@ -4,6 +4,14 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# HuggingFace / transformers progress-bar suppression (smoke-only defaults)
+# ---------------------------------------------------------------------------
+: "${HF_HUB_DISABLE_PROGRESS_BARS:=1}"
+: "${TRANSFORMERS_VERBOSITY:=error}"
+: "${TQDM_MININTERVAL:=5}"
+export HF_HUB_DISABLE_PROGRESS_BARS TRANSFORMERS_VERBOSITY TQDM_MININTERVAL
+
+# ---------------------------------------------------------------------------
 # Env-var overrides (all have defaults)
 # ---------------------------------------------------------------------------
 TENANT_ID="${TENANT_ID:-peak}"
