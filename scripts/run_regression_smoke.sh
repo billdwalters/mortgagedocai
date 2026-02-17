@@ -59,6 +59,7 @@ RUN_LLM="${RUN_LLM:-1}"
 RUN_UW_DECISION="${RUN_UW_DECISION:-0}"
 UW_DECISION_QUERY="${UW_DECISION_QUERY:-Deterministic underwriting decision based on DTI thresholds.}"
 SMOKE_DEBUG="${SMOKE_DEBUG:-0}"
+EXPECT_RP_HASH_STABLE="${EXPECT_RP_HASH_STABLE:-0}"
 
 # ---------------------------------------------------------------------------
 # Derived paths
@@ -122,6 +123,32 @@ print(len(chunks))
         fail "retrieval_pack.json has 0 retrieved_chunks"
     else
         echo "  retrieved_chunks: ${RP_CHUNK_COUNT}"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# B2) Optional: verify retrieval_pack.json hash stability
+# ---------------------------------------------------------------------------
+if [ "${EXPECT_RP_HASH_STABLE}" = "1" ]; then
+    echo "=== Assert: retrieval_pack.json hash stability ==="
+    RP_HASH_1=$(sha256sum "$RP_PATH" | awk '{print $1}')
+
+    python3 "${SCRIPT_DIR}/step13_build_retrieval_pack.py" \
+        --tenant-id "$TENANT_ID" \
+        --loan-id "$LOAN_ID" \
+        --run-id "$RUN_ID" \
+        --query "$QUERY_RETRIEVE" \
+        --out-run-id "$RUN_ID" \
+        --top-k "$TOP_K" \
+        ${OFFLINE_FLAG} \
+        ${STEP13_DEBUG_FLAG}
+
+    RP_HASH_2=$(sha256sum "$RP_PATH" | awk '{print $1}')
+
+    if [ "$RP_HASH_1" != "$RP_HASH_2" ]; then
+        fail "retrieval_pack.json hash changed across identical Step13 runs (${RP_HASH_1} != ${RP_HASH_2})"
+    else
+        echo "  OK: retrieval_pack.json hash stable (${RP_HASH_1})"
     fi
 fi
 
