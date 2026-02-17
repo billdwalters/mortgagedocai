@@ -46,6 +46,7 @@ INCOME_MAX_PER_FILE="${INCOME_MAX_PER_FILE:-12}"
 INCOME_REQUIRED_KEYWORDS="${INCOME_REQUIRED_KEYWORDS:-Total Monthly Payments}"
 INCOME_REQUIRED_KEYWORDS_2="${INCOME_REQUIRED_KEYWORDS_2:-Profit and Loss}"
 EXPECT_DTI="${EXPECT_DTI:-0}"
+MAX_DROPPED_CHUNKS="${MAX_DROPPED_CHUNKS:-999999}"
 RUN_UW_DECISION="${RUN_UW_DECISION:-0}"
 UW_DECISION_QUERY="${UW_DECISION_QUERY:-Deterministic underwriting decision based on DTI thresholds.}"
 
@@ -344,7 +345,7 @@ INCOME_DTI="skip"
 INCOME_PITIA="skip"
 if [ "${RUN_INCOME_ANALYSIS}" = "1" ]; then
     echo "=== Step13: building income-focused retrieval pack ==="
-    python3 "${SCRIPT_DIR}/step13_build_retrieval_pack.py" \
+    _STEP13_INC_OUT=$(python3 "${SCRIPT_DIR}/step13_build_retrieval_pack.py" \
         --tenant-id "$TENANT_ID" \
         --loan-id "$LOAN_ID" \
         --run-id "$RUN_ID" \
@@ -355,7 +356,18 @@ if [ "${RUN_INCOME_ANALYSIS}" = "1" ]; then
         --required-keywords "$INCOME_REQUIRED_KEYWORDS" \
         --required-keywords "$INCOME_REQUIRED_KEYWORDS_2" \
         --debug \
-        ${OFFLINE_FLAG}
+        ${OFFLINE_FLAG} 2>&1)
+    echo "$_STEP13_INC_OUT"
+
+    # Gate: dropped chunk_ids must not exceed MAX_DROPPED_CHUNKS
+    _DROPPED_COUNT=$(echo "$_STEP13_INC_OUT" \
+        | grep -o '[0-9]*/[0-9]* chunk_ids not found' \
+        | sed 's|/.*||' \
+        | tail -1) || true
+    _DROPPED_COUNT="${_DROPPED_COUNT:-0}"
+    if [ "$_DROPPED_COUNT" -gt "$MAX_DROPPED_CHUNKS" ]; then
+        fail "income Step13: dropped ${_DROPPED_COUNT} chunk_ids (max allowed: ${MAX_DROPPED_CHUNKS})"
+    fi
 
     echo "=== Step12: income_analysis (mistral) ==="
     python3 "${SCRIPT_DIR}/step12_analyze.py" \
