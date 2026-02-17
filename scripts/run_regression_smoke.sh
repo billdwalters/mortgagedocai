@@ -370,9 +370,13 @@ if [ "${RUN_INCOME_ANALYSIS}" = "1" ]; then
         --max-per-file "$INCOME_MAX_PER_FILE" \
         --required-keywords "$INCOME_REQUIRED_KEYWORDS" \
         --required-keywords "$INCOME_REQUIRED_KEYWORDS_2" \
-        ${STEP13_DEBUG_FLAG} \
+        --debug \
         ${OFFLINE_FLAG} 2>&1)
-    echo "$_STEP13_INC_OUT"
+    if [ "${SMOKE_DEBUG}" = "1" ]; then
+        echo "$_STEP13_INC_OUT"
+    else
+        echo "$_STEP13_INC_OUT" | grep -v '^\[DEBUG\]'
+    fi
 
     # Gate: dropped chunk_ids must not exceed MAX_DROPPED_CHUNKS
     _DROPPED_COUNT=$(echo "$_STEP13_INC_OUT" \
