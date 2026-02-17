@@ -47,6 +47,7 @@ INCOME_REQUIRED_KEYWORDS="${INCOME_REQUIRED_KEYWORDS:-Total Monthly Payments}"
 INCOME_REQUIRED_KEYWORDS_2="${INCOME_REQUIRED_KEYWORDS_2:-Profit and Loss}"
 EXPECT_DTI="${EXPECT_DTI:-0}"
 MAX_DROPPED_CHUNKS="${MAX_DROPPED_CHUNKS:-999999}"
+RUN_LLM="${RUN_LLM:-1}"
 RUN_UW_DECISION="${RUN_UW_DECISION:-0}"
 UW_DECISION_QUERY="${UW_DECISION_QUERY:-Deterministic underwriting decision based on DTI thresholds.}"
 
@@ -114,99 +115,100 @@ fi
 
 # ---------------------------------------------------------------------------
 # C) Run Step12 with phi3
-# ---------------------------------------------------------------------------
-echo "=== Step12: phi3 ==="
-python3 "${SCRIPT_DIR}/step12_analyze.py" \
-    --tenant-id "$TENANT_ID" \
-    --loan-id "$LOAN_ID" \
-    --run-id "$RUN_ID" \
-    --query "$QUERY_ANALYZE" \
-    --analysis-profile default_phi3 \
-    --ollama-url "$OLLAMA_URL" \
-    --llm-model "$PHI3_MODEL" \
-    --llm-temperature 0 \
-    --llm-max-tokens "$PHI3_MAX_TOKENS" \
-    --evidence-max-chars "$PHI3_EVIDENCE_MAX_CHARS" \
-    --ollama-timeout "$OLLAMA_TIMEOUT" \
-    --save-llm-raw
-
-# ---------------------------------------------------------------------------
 # D) Assert phi3 outputs exist and citations.jsonl > 0
 # ---------------------------------------------------------------------------
-echo "=== Assert: phi3 outputs ==="
-PHI3_ANSWER="${PHI3_ROOT}/answer.json"
-PHI3_CITATIONS="${PHI3_ROOT}/citations.jsonl"
-PHI3_RAW="${PHI3_ROOT}/llm_raw.txt"
+if [ "${RUN_LLM}" = "1" ]; then
+    echo "=== Step12: phi3 ==="
+    python3 "${SCRIPT_DIR}/step12_analyze.py" \
+        --tenant-id "$TENANT_ID" \
+        --loan-id "$LOAN_ID" \
+        --run-id "$RUN_ID" \
+        --query "$QUERY_ANALYZE" \
+        --analysis-profile default_phi3 \
+        --ollama-url "$OLLAMA_URL" \
+        --llm-model "$PHI3_MODEL" \
+        --llm-temperature 0 \
+        --llm-max-tokens "$PHI3_MAX_TOKENS" \
+        --evidence-max-chars "$PHI3_EVIDENCE_MAX_CHARS" \
+        --ollama-timeout "$OLLAMA_TIMEOUT" \
+        --save-llm-raw
 
-if [ ! -f "$PHI3_ANSWER" ]; then
-    fail "phi3: answer.json not found at ${PHI3_ANSWER}"
-fi
-if [ ! -f "$PHI3_CITATIONS" ]; then
-    fail "phi3: citations.jsonl not found at ${PHI3_CITATIONS}"
-else
-    PHI3_CIT_COUNT=$(wc -l < "$PHI3_CITATIONS" | tr -d ' ')
-    if [ "$PHI3_CIT_COUNT" -eq 0 ]; then
-        fail "phi3: citations.jsonl has 0 lines"
-    else
-        echo "  phi3 citations: ${PHI3_CIT_COUNT}"
+    echo "=== Assert: phi3 outputs ==="
+    PHI3_ANSWER="${PHI3_ROOT}/answer.json"
+    PHI3_CITATIONS="${PHI3_ROOT}/citations.jsonl"
+    PHI3_RAW="${PHI3_ROOT}/llm_raw.txt"
+
+    if [ ! -f "$PHI3_ANSWER" ]; then
+        fail "phi3: answer.json not found at ${PHI3_ANSWER}"
     fi
-fi
-if [ ! -f "$PHI3_RAW" ]; then
-    fail "phi3: llm_raw.txt not found (--save-llm-raw not working?)"
-else
-    echo "  phi3 llm_raw.txt: $(wc -c < "$PHI3_RAW" | tr -d ' ') bytes"
+    if [ ! -f "$PHI3_CITATIONS" ]; then
+        fail "phi3: citations.jsonl not found at ${PHI3_CITATIONS}"
+    else
+        PHI3_CIT_COUNT=$(wc -l < "$PHI3_CITATIONS" | tr -d ' ')
+        if [ "$PHI3_CIT_COUNT" -eq 0 ]; then
+            fail "phi3: citations.jsonl has 0 lines"
+        else
+            echo "  phi3 citations: ${PHI3_CIT_COUNT}"
+        fi
+    fi
+    if [ ! -f "$PHI3_RAW" ]; then
+        fail "phi3: llm_raw.txt not found (--save-llm-raw not working?)"
+    else
+        echo "  phi3 llm_raw.txt: $(wc -c < "$PHI3_RAW" | tr -d ' ') bytes"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
 # E) Run Step12 with mistral
-# ---------------------------------------------------------------------------
-echo "=== Step12: mistral ==="
-python3 "${SCRIPT_DIR}/step12_analyze.py" \
-    --tenant-id "$TENANT_ID" \
-    --loan-id "$LOAN_ID" \
-    --run-id "$RUN_ID" \
-    --query "$QUERY_ANALYZE" \
-    --analysis-profile default_mistral \
-    --ollama-url "$OLLAMA_URL" \
-    --llm-model "$MISTRAL_MODEL" \
-    --llm-temperature 0 \
-    --llm-max-tokens "$MISTRAL_MAX_TOKENS" \
-    --evidence-max-chars "$MISTRAL_EVIDENCE_MAX_CHARS" \
-    --ollama-timeout "$OLLAMA_TIMEOUT" \
-    --save-llm-raw
-
-# ---------------------------------------------------------------------------
 # F) Assert mistral outputs exist and citations.jsonl > 0
 # ---------------------------------------------------------------------------
-echo "=== Assert: mistral outputs ==="
-MISTRAL_ANSWER="${MISTRAL_ROOT}/answer.json"
-MISTRAL_CITATIONS="${MISTRAL_ROOT}/citations.jsonl"
-MISTRAL_RAW="${MISTRAL_ROOT}/llm_raw.txt"
+if [ "${RUN_LLM}" = "1" ]; then
+    echo "=== Step12: mistral ==="
+    python3 "${SCRIPT_DIR}/step12_analyze.py" \
+        --tenant-id "$TENANT_ID" \
+        --loan-id "$LOAN_ID" \
+        --run-id "$RUN_ID" \
+        --query "$QUERY_ANALYZE" \
+        --analysis-profile default_mistral \
+        --ollama-url "$OLLAMA_URL" \
+        --llm-model "$MISTRAL_MODEL" \
+        --llm-temperature 0 \
+        --llm-max-tokens "$MISTRAL_MAX_TOKENS" \
+        --evidence-max-chars "$MISTRAL_EVIDENCE_MAX_CHARS" \
+        --ollama-timeout "$OLLAMA_TIMEOUT" \
+        --save-llm-raw
 
-if [ ! -f "$MISTRAL_ANSWER" ]; then
-    fail "mistral: answer.json not found at ${MISTRAL_ANSWER}"
-fi
-if [ ! -f "$MISTRAL_CITATIONS" ]; then
-    fail "mistral: citations.jsonl not found at ${MISTRAL_CITATIONS}"
-else
-    MISTRAL_CIT_COUNT=$(wc -l < "$MISTRAL_CITATIONS" | tr -d ' ')
-    if [ "$MISTRAL_CIT_COUNT" -eq 0 ]; then
-        fail "mistral: citations.jsonl has 0 lines"
-    else
-        echo "  mistral citations: ${MISTRAL_CIT_COUNT}"
+    echo "=== Assert: mistral outputs ==="
+    MISTRAL_ANSWER="${MISTRAL_ROOT}/answer.json"
+    MISTRAL_CITATIONS="${MISTRAL_ROOT}/citations.jsonl"
+    MISTRAL_RAW="${MISTRAL_ROOT}/llm_raw.txt"
+
+    if [ ! -f "$MISTRAL_ANSWER" ]; then
+        fail "mistral: answer.json not found at ${MISTRAL_ANSWER}"
     fi
-fi
-if [ ! -f "$MISTRAL_RAW" ]; then
-    fail "mistral: llm_raw.txt not found (--save-llm-raw not working?)"
-else
-    echo "  mistral llm_raw.txt: $(wc -c < "$MISTRAL_RAW" | tr -d ' ') bytes"
+    if [ ! -f "$MISTRAL_CITATIONS" ]; then
+        fail "mistral: citations.jsonl not found at ${MISTRAL_CITATIONS}"
+    else
+        MISTRAL_CIT_COUNT=$(wc -l < "$MISTRAL_CITATIONS" | tr -d ' ')
+        if [ "$MISTRAL_CIT_COUNT" -eq 0 ]; then
+            fail "mistral: citations.jsonl has 0 lines"
+        else
+            echo "  mistral citations: ${MISTRAL_CIT_COUNT}"
+        fi
+    fi
+    if [ ! -f "$MISTRAL_RAW" ]; then
+        fail "mistral: llm_raw.txt not found (--save-llm-raw not working?)"
+    else
+        echo "  mistral llm_raw.txt: $(wc -c < "$MISTRAL_RAW" | tr -d ' ') bytes"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
 # G) Integrity checks: every cited chunk_id must be in retrieval_pack
 # ---------------------------------------------------------------------------
-echo "=== Integrity: citation chunk_id ∈ retrieval_pack ==="
-INTEGRITY_RESULT=$(python3 -c "
+if [ "${RUN_LLM}" = "1" ]; then
+    echo "=== Integrity: citation chunk_id ∈ retrieval_pack ==="
+    INTEGRITY_RESULT=$(python3 -c "
 import json, sys
 
 rp = json.load(open('${RP_PATH}'))
@@ -244,11 +246,12 @@ else:
     print(f'OK: all cited chunk_ids found in retrieval_pack ({len(rp_ids)} rp_ids)')
     sys.exit(0)
 ")
-if [ $? -ne 0 ]; then
-    fail "citation integrity check failed"
-    echo "$INTEGRITY_RESULT"
-else
-    echo "  ${INTEGRITY_RESULT}"
+    if [ $? -ne 0 ]; then
+        fail "citation integrity check failed"
+        echo "$INTEGRITY_RESULT"
+    else
+        echo "  ${INTEGRITY_RESULT}"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -692,8 +695,10 @@ if [ "$FAIL" -ne 0 ]; then
 else
     echo "SMOKE TEST: PASS"
     echo "  retrieved_chunks : ${RP_CHUNK_COUNT:-?}"
-    echo "  phi3 citations   : ${PHI3_CIT_COUNT:-?}"
-    echo "  mistral citations: ${MISTRAL_CIT_COUNT:-?}"
+    if [ "${RUN_LLM}" = "1" ]; then
+        echo "  phi3 citations   : ${PHI3_CIT_COUNT:-?}"
+        echo "  mistral citations: ${MISTRAL_CIT_COUNT:-?}"
+    fi
     if [ "${RUN_UW_CONDITIONS}" = "1" ]; then
         echo "  uw_conditions    : ${UW_COND_COUNT} conditions, ${UW_CIT_TOTAL} citations"
     fi
