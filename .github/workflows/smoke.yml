@@ -1,0 +1,43 @@
+name: Deterministic Smoke Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, linux, aiserver]
+    timeout-minutes: 60
+    env:
+      RUN_LLM: "0"
+      RUN_INCOME_ANALYSIS: "1"
+      RUN_UW_DECISION: "1"
+      EXPECT_DTI: "1"
+      EXPECT_RP_HASH_STABLE: "1"
+      MAX_DROPPED_CHUNKS: "5"
+      SMOKE_DEBUG: "0"
+      PYTHONUNBUFFERED: "1"
+      HF_HUB_DISABLE_PROGRESS_BARS: "1"
+      TRANSFORMERS_VERBOSITY: "error"
+      TQDM_MININTERVAL: "999999"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify NAS mount
+        run: |
+          set -euxo pipefail
+          test -d /mnt/nas_apps || { echo "FATAL: /mnt/nas_apps not mounted"; exit 1; }
+
+      - name: Activate venv and run smoke test
+        run: |
+          set -euxo pipefail
+          source /opt/mortgagedocai/venv/bin/activate
+          bash scripts/run_regression_smoke.sh
