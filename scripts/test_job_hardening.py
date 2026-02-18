@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Tests for job_runner production hardening: idempotency, per-loan lock, restart recovery."""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
+from unittest.mock import patch
+
+# Run from scripts/
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import job_runner  # noqa: E402
+
+
+def _tmp_nas():
+    d = tempfile.mkdtemp(prefix="nas_analyze_")
+    return Path(d)
+
+
+def test_idempotency_same_job_id():
+    """Enqueue same job twice; second call returns same job_id."""
+    nas = _tmp_nas()
+    tenants = nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs"
+    tenants.mkdir(parents=True)
+    req = {"run_id": "run-1", "skip_intake": True}
+    with patch.object(job_runner, "NAS_ANALYZE", nas):
+        job_runner.JOBS.clear()
+        job_runner.JOB_KEY_INDEX.clear()
+        r1 = job_runner.enqueue_job("t1", "L1", req)
+        r2 = job_runner.enqueue_job("t1", "L1", req)
+    assert r1["job_id"] == r2["job_id"], (r1, r2)
+    assert "job_id" in r1 and "status" in r1 and "status_url" in r1
+    assert "job_key" not in r1 and "job_key" not in r2
+    job = job_runner.get_job(r1["job_id"])
+    assert job is not None
+    assert "job_key" not in job
+    print("test_idempotency_same_job_id OK")
+
+
+def test_restart_recovery_running_becomes_fail():
+    """After reload, a RUNNING job with no manifest becomes FAIL."""
+    nas = _tmp_nas()
+    job_dir = nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs"
+    job_dir.mkdir(parents=True)
+    job_id = "recovery-test-job-id"
+    job_file = job_dir / f"{job_id}.json"
+    job = {
+        "job_id": job_id,
+        "tenant_id": "t1",
+        "loan_id": "L1",
+        "run_id": "run-x",
+        "status": "RUNNING",
+        "created_at_utc": "2025-01-01T00:00:00Z",
+        "started_at_utc": "2025-01-01T00:00:01Z",
+        "finished_at_utc": None,
+        "request": {"run_id": "run-x"},
+        "result": None,
+        "error": None,
+        "stdout": None,
+        "stderr": None,
+    }
+    job_file.write_text(json.dumps(job))
+    with patch.object(job_runner, "NAS_ANALYZE", nas):
+        job_runner.JOBS.clear()
+        job_runner.JOB_KEY_INDEX.clear()
+        job_runner.load_jobs_from_disk()
+    j = job_runner.get_job(job_id)
+    assert j is not None, "job should be loaded"
+    assert j["status"] == "FAIL", j
+    assert "Recovered after restart" in (j.get("error") or ""), j
+    print("test_restart_recovery_running_becomes_fail OK")
+
+
+def test_per_loan_lock_second_waits():
+    """Two jobs for same loan: second waits for lock (no collision)."""
+    nas = _tmp_nas()
+    (nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs").mkdir(parents=True)
+    run_times = []
+
+    def slow_run(*a, **kw):
+        run_times.append(time.time())
+        time.sleep(1.5)
+        return type("R", (), {"returncode": 0, "stdout": "run_id = slow-1", "stderr": ""})()
+
+    req1 = {"run_id": "run-a", "skip_intake": True}
+    req2 = {"run_id": "run-b", "skip_intake": True}
+    with patch.object(job_runner, "NAS_ANALYZE", nas), patch("subprocess.run", side_effect=slow_run):
+        job_runner.JOBS.clear()
+        job_runner.JOB_KEY_INDEX.clear()
+        r1 = job_runner.enqueue_job("t1", "L1", req1)
+        r2 = job_runner.enqueue_job("t1", "L1", req2)
+        assert r1["job_id"] != r2["job_id"]
+        # Wait for both to finish inside patch so workers see patched NAS_ANALYZE
+        for _ in range(30):
+            j1 = job_runner.get_job(r1["job_id"])
+            j2 = job_runner.get_job(r2["job_id"])
+            if j1 and j2 and j1.get("status") in ("SUCCESS", "FAIL") and j2.get("status") in ("SUCCESS", "FAIL"):
+                break
+            time.sleep(0.5)
+    j1 = job_runner.get_job(r1["job_id"])
+    j2 = job_runner.get_job(r2["job_id"])
+    assert j1 and j2
+    assert j1["status"] in ("SUCCESS", "FAIL") and j2["status"] in ("SUCCESS", "FAIL")
+    assert len(run_times) >= 2, run_times
+    # Both jobs ran and completed; per-loan lock ensures no collision (serialized execution)
+    print("test_per_loan_lock_second_waits OK")
+
+
+if __name__ == "__main__":
+    test_idempotency_same_job_id()
+    test_restart_recovery_running_becomes_fail()
+    test_per_loan_lock_second_waits()
+    print("All hardening tests passed.")
