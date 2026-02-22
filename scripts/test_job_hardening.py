@@ -76,7 +76,7 @@ def test_restart_recovery_running_becomes_fail():
 
 
 def test_per_loan_lock_second_waits():
-    """Two jobs for same loan: second waits for lock (no collision)."""
+    """Two jobs for same loan: worker processes them (claim + per-loan lock, no collision)."""
     nas = _tmp_nas()
     (nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs").mkdir(parents=True)
     run_times = []
@@ -94,8 +94,16 @@ def test_per_loan_lock_second_waits():
         r1 = job_runner.enqueue_job("t1", "L1", req1)
         r2 = job_runner.enqueue_job("t1", "L1", req2)
         assert r1["job_id"] != r2["job_id"]
-        # Wait for both to finish inside patch so workers see patched NAS_ANALYZE
+        from job_worker import run_one_cycle
+        from loan_service.adapters_disk import DiskJobStore, LoanLockImpl
+        from loan_service.adapters_subprocess import SubprocessRunner
+        get_base = lambda: nas
+        store = DiskJobStore(get_base)
+        loan_lock = LoanLockImpl(get_base)
+        runner = SubprocessRunner()
         for _ in range(30):
+            run_one_cycle(get_base, store, loan_lock, runner)
+            job_runner.load_jobs_from_disk()
             j1 = job_runner.get_job(r1["job_id"])
             j2 = job_runner.get_job(r2["job_id"])
             if j1 and j2 and j1.get("status") in ("SUCCESS", "FAIL") and j2.get("status") in ("SUCCESS", "FAIL"):
@@ -106,12 +114,39 @@ def test_per_loan_lock_second_waits():
     assert j1 and j2
     assert j1["status"] in ("SUCCESS", "FAIL") and j2["status"] in ("SUCCESS", "FAIL")
     assert len(run_times) >= 2, run_times
-    # Both jobs ran and completed; per-loan lock ensures no collision (serialized execution)
     print("test_per_loan_lock_second_waits OK")
+
+
+def test_worker_processes_one_queued_job():
+    """Worker run_one_cycle processes a single PENDING job (claim + run + persist)."""
+    nas = _tmp_nas()
+    (nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs").mkdir(parents=True)
+    with patch.object(job_runner, "NAS_ANALYZE", nas):
+        job_runner.JOBS.clear()
+        job_runner.JOB_KEY_INDEX.clear()
+        r = job_runner.enqueue_job("t1", "L1", {"run_id": "run-1", "skip_intake": True})
+        job_id = r["job_id"]
+        assert r["status"] == "PENDING"
+        class FakeRunner:
+            def run(self, req, tenant_id, loan_id, env, timeout):
+                return 0, "run_id = run-1", ""
+        from job_worker import run_one_cycle
+        from loan_service.adapters_disk import DiskJobStore, LoanLockImpl
+        get_base = lambda: nas
+        store = DiskJobStore(get_base)
+        loan_lock = LoanLockImpl(get_base)
+        ok = run_one_cycle(get_base, store, loan_lock, FakeRunner())
+        assert ok
+        job_runner.load_jobs_from_disk()
+        j = job_runner.get_job(job_id)
+    assert j is not None
+    assert j["status"] in ("SUCCESS", "FAIL")
+    print("test_worker_processes_one_queued_job OK")
 
 
 if __name__ == "__main__":
     test_idempotency_same_job_id()
     test_restart_recovery_running_becomes_fail()
     test_per_loan_lock_second_waits()
+    test_worker_processes_one_queued_job()
     print("All hardening tests passed.")

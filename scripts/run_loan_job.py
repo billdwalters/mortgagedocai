@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import os
 import subprocess
 import sys
@@ -65,16 +66,22 @@ def _step(name: str) -> str:
     return str(SCRIPT_DIR / name)
 
 
-def _run(cmd: list, label: str) -> None:
-    """Run a subprocess; raise on non-zero exit."""
+def _run(cmd: list, label: str, env: Optional[Dict[str, str]] = None) -> None:
+    """Run a subprocess; raise on non-zero exit. If env is set, merge with os.environ."""
     print(f"=== {label} ===", flush=True)
-    subprocess.run(cmd, check=True)
+    run_env = {**os.environ, **env} if env else None
+    subprocess.run(cmd, check=True, env=run_env)
 
 
 def _utc_now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
+
+
+def _phase(name: str) -> None:
+    """Emit one phase marker line to stdout for desktop progress (format: PHASE:<NAME> <UTC_ISO_Z>)."""
+    print(f"PHASE:{name} {_utc_now_iso()}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +145,22 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--ollama-url", default="http://localhost:11434")
     p.add_argument("--run-id", default=None,
                    help="Override run_id (default: auto-generate; required with --skip-process)")
+    p.add_argument("--run-llm", dest="run_llm", action="store_true", default=True,
+                   help="Run LLM profiles (default: true)")
+    p.add_argument("--no-run-llm", dest="run_llm", action="store_false",
+                   help="Deterministic-only: do not call Ollama")
+    p.add_argument("--expect-rp-hash-stable", action="store_true", default=False,
+                   help="Rerun general Step13 and fail if retrieval_pack hash differs")
+    p.add_argument("--max-dropped-chunks", type=int, default=None,
+                   help="Fail if income-focused Step13 reports dropped_chunk_ids_count > this")
+    p.add_argument("--debug", action="store_true", default=False,
+                   help="Pass debug to steps and emit extra logs (smoke_debug)")
+    p.add_argument("--offline-embeddings", action="store_true", default=False,
+                   help="Pass --offline-embeddings to Step13 (use only cached model files)")
+    p.add_argument("--top-k", type=int, default=None,
+                   help="Override Step13 top-k for both general and income runs (default: 80 / 120)")
+    p.add_argument("--max-per-file", type=int, default=None,
+                   help="Override Step13 max-per-file for income run (default: 12)")
     args = p.parse_args(argv)
     if not args.skip_intake and not args.source_path:
         p.error("--source-path is required unless --skip-intake is set")
@@ -170,6 +193,18 @@ def main(argv=None) -> int:
     )
     manifest_path = manifest_dir / "job_manifest.json"
 
+    # Short-circuit: if run_id was supplied and manifest already SUCCESS, skip run
+    if args.run_id and manifest_path.exists():
+        try:
+            with manifest_path.open() as f:
+                existing = json.load(f)
+            if existing.get("status") == "SUCCESS":
+                print(f"run_id = {run_id} (short-circuit: manifest already SUCCESS)", flush=True)
+                _phase("DONE")
+                return 0
+        except (json.JSONDecodeError, OSError):
+            pass
+
     rp_path = (
         NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id
         / "retrieve" / run_id / "retrieval_pack.json"
@@ -185,6 +220,7 @@ def main(argv=None) -> int:
 
         # --- Step 10: Intake ---
         if not args.skip_intake:
+            _phase("INTAKE")
             validate_source_path(source_path)
             _run([
                 "python3", _step("step10_intake.py"),
@@ -195,6 +231,7 @@ def main(argv=None) -> int:
 
         # --- Step 11: Process / Chunk / Embed ---
         if not args.skip_process:
+            _phase("PROCESS")
             _run([
                 "python3", _step("step11_process.py"),
                 "--tenant-id", tenant_id,
@@ -203,34 +240,77 @@ def main(argv=None) -> int:
             ], "Step11: process + embed")
 
         # --- Step 13: General retrieval pack ---
-        _run([
+        _phase("STEP13_GENERAL")
+        top_k_general = args.top_k if args.top_k is not None else 80
+        step13_general_cmd = [
             "python3", _step("step13_build_retrieval_pack.py"),
             "--tenant-id", tenant_id,
             "--loan-id", loan_id,
             "--run-id", run_id,
             "--query", QUERY_RETRIEVE,
             "--out-run-id", run_id,
-            "--top-k", "80",
-        ], "Step13: general retrieval pack")
+            "--top-k", str(top_k_general),
+        ]
+        if args.debug:
+            step13_general_cmd.append("--debug")
+        if args.offline_embeddings:
+            step13_general_cmd.append("--offline-embeddings")
+        _run(step13_general_cmd, "Step13: general retrieval pack")
+        if args.expect_rp_hash_stable:
+            if not rp_path.exists():
+                raise RuntimeError("expect_rp_hash_stable: retrieval_pack.json missing after first Step13")
+            hash1 = sha256_file(rp_path)
+            _run(step13_general_cmd, "Step13: general retrieval pack (rerun for hash stability)")
+            if not rp_path.exists():
+                raise RuntimeError("expect_rp_hash_stable: retrieval_pack.json missing after rerun")
+            hash2 = sha256_file(rp_path)
+            if hash1 != hash2:
+                raise RuntimeError(
+                    f"expect_rp_hash_stable: retrieval_pack hash changed (first={hash1!r}, second={hash2!r})"
+                )
+            if args.debug:
+                print(f"[debug] expect_rp_hash_stable: hashes match {hash1!r}", flush=True)
 
+        step12_env = None if args.run_llm else {"RUN_LLM": "0"}
         # --- Income analysis ---
         if ran_income:
+            _phase("STEP13_INCOME")
             # Step 13: income-focused retrieval (overwrites RP)
-            _run([
+            top_k_income = args.top_k if args.top_k is not None else 120
+            max_per_file = args.max_per_file if args.max_per_file is not None else 12
+            step13_income_cmd = [
                 "python3", _step("step13_build_retrieval_pack.py"),
                 "--tenant-id", tenant_id,
                 "--loan-id", loan_id,
                 "--run-id", run_id,
                 "--query", INCOME_RETRIEVE_QUERY,
                 "--out-run-id", run_id,
-                "--top-k", "120",
-                "--max-per-file", "12",
+                "--top-k", str(top_k_income),
+                "--max-per-file", str(max_per_file),
                 "--required-keywords", "Total Monthly Payments",
                 "--required-keywords", "Profit and Loss",
-            ], "Step13: income-focused retrieval pack")
+            ]
+            if args.debug:
+                step13_income_cmd.append("--debug")
+            if args.offline_embeddings:
+                step13_income_cmd.append("--offline-embeddings")
+            _run(step13_income_cmd, "Step13: income-focused retrieval pack")
+            if args.max_dropped_chunks is not None and rp_path.exists():
+                with rp_path.open() as f:
+                    rp_data = json.load(f)
+                meta = rp_data.get("retrieval_pack_meta") or {}
+                dropped_count = meta.get("dropped_chunk_ids_count", 0)
+                if dropped_count > args.max_dropped_chunks:
+                    raise RuntimeError(
+                        f"max_dropped_chunks={args.max_dropped_chunks} but income Step13 reported "
+                        f"dropped_chunk_ids_count={dropped_count}"
+                    )
+                if args.debug:
+                    print(f"[debug] max_dropped_chunks check: dropped_chunk_ids_count={dropped_count}", flush=True)
 
-            # Step 12: income_analysis
-            _run([
+            _phase("STEP12_INCOME_ANALYSIS")
+            # Step 12: income_analysis (env RUN_LLM=0 when --no-run-llm)
+            step12_income_cmd = [
                 "python3", _step("step12_analyze.py"),
                 "--tenant-id", tenant_id,
                 "--loan-id", loan_id,
@@ -244,12 +324,15 @@ def main(argv=None) -> int:
                 "--evidence-max-chars", "4500",
                 "--ollama-timeout", "900",
                 "--save-llm-raw",
-                "--debug",
-            ], "Step12: income_analysis")
+            ]
+            if args.debug:
+                step12_income_cmd.append("--debug")
+            _run(step12_income_cmd, "Step12: income_analysis", env=step12_env)
 
         # --- UW Decision ---
         if ran_uw_decision:
-            _run([
+            _phase("STEP12_UW_DECISION")
+            step12_uw_cmd = [
                 "python3", _step("step12_analyze.py"),
                 "--tenant-id", tenant_id,
                 "--loan-id", loan_id,
@@ -262,8 +345,10 @@ def main(argv=None) -> int:
                 "--llm-max-tokens", "1",
                 "--ollama-timeout", "10",
                 "--no-auto-retrieve",
-                "--debug",
-            ], "Step12: uw_decision")
+            ]
+            if args.debug:
+                step12_uw_cmd.append("--debug")
+            _run(step12_uw_cmd, "Step12: uw_decision", env=step12_env)
 
     except subprocess.CalledProcessError as exc:
         error_msg = f"{exc.cmd[1] if len(exc.cmd) > 1 else exc.cmd[0]} exited {exc.returncode}"
@@ -291,6 +376,15 @@ def main(argv=None) -> int:
         "run_id": run_id,
         "status": status,
         "tenant_id": tenant_id,
+        "options": {
+            "run_llm": args.run_llm,
+            "expect_rp_hash_stable": args.expect_rp_hash_stable,
+            "max_dropped_chunks": args.max_dropped_chunks,
+            "smoke_debug": args.debug,
+            "offline_embeddings": args.offline_embeddings,
+            "top_k": args.top_k,
+            "max_per_file": args.max_per_file,
+        },
     }
     if error_msg is not None:
         manifest["error"] = error_msg
@@ -302,6 +396,10 @@ def main(argv=None) -> int:
     print(f"\n{'✓' if status == 'SUCCESS' else '✗'} job_manifest: {manifest_path}", flush=True)
     print(f"  status={status}  run_id={run_id}  rp_sha256={rp_sha256 or 'null'}", flush=True)
 
+    if status == "SUCCESS":
+        _phase("DONE")
+    else:
+        _phase("FAIL")
     return 0 if status == "SUCCESS" else 1
 
 

@@ -378,11 +378,17 @@ def main(argv=None) -> None:
         out_root = NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id / "retrieve" / out_run
     ensure_dir(out_root)
 
+    dropped_total = dropped + len(missing_ids)
+    retrieval_pack_meta = {
+        "dropped_chunk_ids_count": dropped_total,
+        "dropped_chunk_ids": missing_ids[:50],
+    }
     pack = {
         "schema_version": "retrieval_pack.v1",
         "tenant_id": tenant_id,
         "loan_id": loan_id,
         "run_id": out_run,
+        "retrieval_pack_meta": retrieval_pack_meta,
         "qdrant": {"url": args.qdrant_url, "collection": collection, "distance": "cosine", "dim": EMBED_DIM},
         "embedding": {"model": args.embedding_model, "dim": EMBED_DIM, "normalize": True, "prefix": "query: ", "device": device},
         "query": {"text": args.query, "text_normalized": normalize_chunk_text(args.query), "text_norm_sha256": _sha256_hex(normalize_chunk_text(args.query))},

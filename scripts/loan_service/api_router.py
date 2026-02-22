@@ -1,13 +1,47 @@
 """FastAPI router: same paths and response shapes as loan_api.py."""
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+PROFILE_FILE_NAMES = (
+    "answer.json",
+    "answer.md",
+    "citations.jsonl",
+    "income_analysis.json",
+    "dti.json",
+    "decision.json",
+    "decision.md",
+    "version.json",
+)
+
+
+def _safe_single_component(name: str) -> bool:
+    """Reject path traversal: no .., no path separators, no empty."""
+    if not name or ".." in name or "/" in name or "\\" in name:
+        return False
+    return True
+
+
+def _media_type_for_filename(filename: str) -> str:
+    if filename.endswith(".json") and filename != ".json":
+        return "application/json"
+    if filename.endswith(".jsonl"):
+        return "application/x-ndjson"
+    if filename.endswith(".md"):
+        return "text/markdown; charset=utf-8"
+    return "application/octet-stream"
+
+WORKER_HEARTBEAT_MAX_AGE_SEC = 300
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .adapters_subprocess import _quiet_env
@@ -49,6 +83,94 @@ class SubmitJobBody(BaseModel):
     llm_model: Optional[str] = None
     run_llm: Optional[int] = None
     timeout: Optional[int] = Field(None, description="Subprocess timeout in seconds (default 3600)")
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _build_artifacts_index(nas_analyze: Path, tenant_id: str, loan_id: str, run_id: str) -> Dict[str, Any]:
+    base = nas_analyze / "tenants" / tenant_id / "loans" / loan_id / run_id
+    if not base.is_dir():
+        raise FileNotFoundError("Run not found")
+    base_dir = str(base.resolve())
+    retrieve_base = nas_analyze / "tenants" / tenant_id / "loans" / loan_id / "retrieve" / run_id
+    rp_path = retrieve_base / "retrieval_pack.json"
+    rp_exists = rp_path.is_file()
+    rp_sha256: Optional[str] = None
+    if rp_exists:
+        try:
+            rp_sha256 = _sha256_file(rp_path)
+        except OSError:
+            pass
+    manifest_path = base / "job_manifest.json"
+    manifest_exists = manifest_path.is_file()
+    manifest_status: Optional[str] = None
+    if manifest_exists:
+        try:
+            with manifest_path.open() as f:
+                manifest = json.load(f)
+            manifest_status = manifest.get("status") if isinstance(manifest, dict) else None
+        except (json.JSONDecodeError, OSError):
+            pass
+    retrieval_pack = {
+        "path": str(rp_path.resolve()) if rp_path.exists() else None,
+        "sha256": rp_sha256,
+        "exists": rp_exists,
+    }
+    job_manifest = {
+        "path": str(manifest_path.resolve()) if manifest_path.exists() else None,
+        "exists": manifest_exists,
+        "status": manifest_status,
+    }
+    profiles_dir = base / "outputs" / "profiles"
+    profiles_list: List[Dict[str, Any]] = []
+    if profiles_dir.is_dir():
+        profile_dirs = sorted([d for d in profiles_dir.iterdir() if d.is_dir()])
+        for prof_dir in profile_dirs:
+            name = prof_dir.name
+            files_list: List[Dict[str, Any]] = []
+            for fname in PROFILE_FILE_NAMES:
+                fpath = prof_dir / fname
+                exists = fpath.is_file()
+                entry = {
+                    "name": fname,
+                    "path": str(fpath.resolve()),
+                    "exists": exists,
+                }
+                if exists:
+                    try:
+                        st = fpath.stat()
+                        entry["size_bytes"] = st.st_size
+                        entry["mtime_utc"] = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+                    except OSError:
+                        entry["size_bytes"] = None
+                        entry["mtime_utc"] = None
+                else:
+                    entry["size_bytes"] = None
+                    entry["mtime_utc"] = None
+                files_list.append(entry)
+            profiles_list.append({
+                "name": name,
+                "dir": str(prof_dir.resolve()),
+                "files": files_list,
+            })
+    return {
+        "tenant_id": tenant_id,
+        "loan_id": loan_id,
+        "run_id": run_id,
+        "base_dir": base_dir,
+        "retrieval_pack": retrieval_pack,
+        "job_manifest": job_manifest,
+        "profiles": profiles_list,
+    }
 
 
 def create_router(
@@ -168,6 +290,93 @@ def create_router(
                 detail=f"Invalid JSON in {manifest_path}: {e}",
             )
 
+    @router.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/artifacts")
+    def get_run_artifacts(tenant_id: str, loan_id: str, run_id: str) -> Dict[str, Any]:
+        try:
+            return _build_artifacts_index(nas_analyze, tenant_id, loan_id, run_id)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+    @router.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/artifacts/{profile}/{filename}")
+    def get_profile_artifact(
+        tenant_id: str, loan_id: str, run_id: str, profile: str, filename: str
+    ) -> FileResponse:
+        base = nas_analyze / "tenants" / tenant_id / "loans" / loan_id / run_id
+        if not base.is_dir():
+            raise HTTPException(status_code=404, detail="Run not found")
+        if not _safe_single_component(profile) or not _safe_single_component(filename):
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        if filename not in PROFILE_FILE_NAMES:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        profiles_base = (base / "outputs" / "profiles").resolve()
+        candidate = (profiles_base / profile / filename).resolve()
+        try:
+            candidate.relative_to(profiles_base)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        if not candidate.is_file():
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        return FileResponse(
+            path=str(candidate),
+            media_type=_media_type_for_filename(filename),
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        )
+
+    @router.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/retrieval_pack")
+    def get_retrieval_pack(tenant_id: str, loan_id: str, run_id: str) -> FileResponse:
+        rp_path = (
+            nas_analyze / "tenants" / tenant_id / "loans" / loan_id
+            / "retrieve" / run_id / "retrieval_pack.json"
+        )
+        if not rp_path.is_file():
+            raise HTTPException(status_code=404, detail="Retrieval pack not found")
+        return FileResponse(
+            path=str(rp_path.resolve()),
+            media_type="application/json",
+            headers={"Content-Disposition": 'inline; filename="retrieval_pack.json"'},
+        )
+
+    @router.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/job_manifest")
+    def get_job_manifest(tenant_id: str, loan_id: str, run_id: str) -> FileResponse:
+        manifest_path = (
+            nas_analyze / "tenants" / tenant_id / "loans" / loan_id / run_id
+            / "job_manifest.json"
+        )
+        if not manifest_path.is_file():
+            raise HTTPException(status_code=404, detail="Job manifest not found")
+        return FileResponse(
+            path=str(manifest_path.resolve()),
+            media_type="application/json",
+            headers={"Content-Disposition": 'inline; filename="job_manifest.json"'},
+        )
+
+    def _warn_if_no_recent_worker_heartbeat(base: Path) -> None:
+        hb = base / "_meta" / "worker_heartbeat.json"
+        if not hb.exists():
+            print("[loan_api] no worker heartbeat file; job queued but worker may not be running", file=sys.stderr)
+            return
+        try:
+            if time.time() - hb.stat().st_mtime > WORKER_HEARTBEAT_MAX_AGE_SEC:
+                print("[loan_api] worker heartbeat is stale; job queued but worker may not be running", file=sys.stderr)
+        except OSError:
+            pass
+
+    @router.post("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/query_jobs", status_code=202)
+    def submit_query_job(
+        tenant_id: str, loan_id: str, run_id: str, body: QueryBody
+    ) -> Dict[str, Any]:
+        valid_profiles = ("default", "uw_conditions", "income_analysis", "uw_decision")
+        if body.profile not in valid_profiles:
+            raise HTTPException(
+                status_code=422,
+                detail=f"profile must be one of {valid_profiles}",
+            )
+        req = {"run_id": run_id, **body.model_dump()}
+        result = job_service.enqueue_job(tenant_id, loan_id, req)
+        if result.get("status") == "PENDING":
+            _warn_if_no_recent_worker_heartbeat(nas_analyze)
+        return result
+
     @router.post("/tenants/{tenant_id}/loans/{loan_id}/jobs", status_code=202)
     def submit_job(tenant_id: str, loan_id: str, body: SubmitJobBody) -> Dict[str, Any]:
         if not body.skip_intake and not body.source_path:
@@ -180,7 +389,10 @@ def create_router(
                 status_code=422,
                 detail="run_id is required when skip_process is True",
             )
-        return job_service.enqueue_job(tenant_id, loan_id, body.model_dump())
+        result = job_service.enqueue_job(tenant_id, loan_id, body.model_dump())
+        if result.get("status") == "PENDING":
+            _warn_if_no_recent_worker_heartbeat(nas_analyze)
+        return result
 
     @router.get("/jobs/{job_id}")
     def get_job_status(job_id: str) -> Dict[str, Any]:

@@ -91,6 +91,134 @@ class DiskJobStore:
         base = self._get_base()
         return base / "tenants" / tenant_id / "loans" / loan_id / "_meta" / "jobs" / f"{job_id}.json"
 
+    def _claim_file_path(self, tenant_id: str, loan_id: str, job_id: str) -> Path:
+        base = self._get_base()
+        return base / "tenants" / tenant_id / "loans" / loan_id / "_meta" / "jobs" / f"{job_id}.claim"
+
+    def load_job(self, tenant_id: str, loan_id: str, job_id: str) -> dict[str, Any] | None:
+        """Load a single job from disk. Returns None if missing or invalid."""
+        path = self._job_file_path(tenant_id, loan_id, job_id)
+        if not path.exists():
+            return None
+        try:
+            with path.open() as f:
+                job = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+        if not isinstance(job, dict) or job.get("job_id") != job_id:
+            return None
+        return job
+
+    def list_pending_jobs(
+        self,
+        tenant_id: str | None = None,
+        loan_id: str | None = None,
+    ) -> list[tuple[str, str, str]]:
+        """List (tenant_id, loan_id, job_id) for jobs with status PENDING, optionally filtered."""
+        base = self._get_base()
+        tenants_dir = base / "tenants"
+        if not tenants_dir.is_dir():
+            return []
+        out: list[tuple[str, str, str]] = []
+        try:
+            for tdir in tenants_dir.iterdir():
+                if not tdir.is_dir():
+                    continue
+                tid = tdir.name
+                if tenant_id is not None and tid != tenant_id:
+                    continue
+                loans_dir = tdir / "loans"
+                if not loans_dir.is_dir():
+                    continue
+                for ldir in loans_dir.iterdir():
+                    if not ldir.is_dir():
+                        continue
+                    lid = ldir.name
+                    if loan_id is not None and lid != loan_id:
+                        continue
+                    jobs_dir = ldir / "_meta" / "jobs"
+                    if not jobs_dir.is_dir():
+                        continue
+                    for p in jobs_dir.iterdir():
+                        if not p.is_file() or p.suffix != ".json":
+                            continue
+                        try:
+                            with p.open() as f:
+                                job = json.load(f)
+                        except (json.JSONDecodeError, OSError):
+                            continue
+                        if not isinstance(job, dict) or job.get("status") != "PENDING":
+                            continue
+                        jid = job.get("job_id")
+                        if jid:
+                            out.append((tid, lid, jid))
+        except OSError:
+            pass
+        return out
+
+    def try_claim(self, tenant_id: str, loan_id: str, job_id: str) -> bool:
+        """Atomically claim a job (create .claim file with O_CREAT|O_EXCL). Returns True if claimed."""
+        path = self._claim_file_path(tenant_id, loan_id, job_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                os.write(fd, json.dumps({"claimed_at_utc": _utc_now_z()}).encode())
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            return True
+        except FileExistsError:
+            return False
+        except OSError:
+            return False
+
+    def release_claim(self, tenant_id: str, loan_id: str, job_id: str) -> None:
+        """Remove claim file for a job."""
+        path = self._claim_file_path(tenant_id, loan_id, job_id)
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
+
+    def clear_stale_claims(self, max_age_sec: int = 300) -> None:
+        """Remove claim files for jobs that are still PENDING and claim is older than max_age_sec."""
+        base = self._get_base()
+        tenants_dir = base / "tenants"
+        if not tenants_dir.is_dir():
+            return
+        now = time.time()
+        try:
+            for tdir in tenants_dir.iterdir():
+                if not tdir.is_dir():
+                    continue
+                loans_dir = tdir / "loans"
+                if not loans_dir.is_dir():
+                    continue
+                for ldir in loans_dir.iterdir():
+                    if not ldir.is_dir():
+                        continue
+                    jobs_dir = ldir / "_meta" / "jobs"
+                    if not jobs_dir.is_dir():
+                        continue
+                    for p in jobs_dir.iterdir():
+                        if not p.is_file() or p.suffix != ".claim":
+                            continue
+                        try:
+                            if now - p.stat().st_mtime > max_age_sec:
+                                job_id = p.stem
+                                job_path = jobs_dir / f"{job_id}.json"
+                                if job_path.exists():
+                                    with job_path.open() as f:
+                                        job = json.load(f)
+                                    if isinstance(job, dict) and job.get("status") == "PENDING":
+                                        p.unlink()
+                        except (OSError, json.JSONDecodeError):
+                            pass
+        except OSError:
+            pass
+
     def load_all(self) -> dict[str, dict[str, Any]]:
         """Load jobs from disk, apply restart recovery for RUNNING, run retention; return job dict."""
         base = self._get_base()

@@ -2588,8 +2588,8 @@ def main(argv=None) -> None:
             })
             continue  # Skip LLM call, evidence loading, etc.
 
-        # If we have no evidence, return Not found.
-        if not evidence_block.strip():
+        # If RUN_LLM=0 (deterministic-only) or no evidence, skip Ollama.
+        if os.environ.get("RUN_LLM", "1") == "0" or not evidence_block.strip():
             llm_obj = {"answer": "Not found in provided documents.", "citations": [], "confidence": 0.1}
             if is_uw:
                 llm_obj["conditions"] = []

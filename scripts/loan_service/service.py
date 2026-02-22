@@ -8,6 +8,7 @@ from typing import Any
 
 from .adapters_disk import (
     ERROR_TRUNCATE,
+    STDOUT_TRUNCATE,
     compute_job_key,
     load_manifest_if_present,
     result_from_manifest,
@@ -55,7 +56,7 @@ class JobService:
                         "status_url": f"/jobs/{existing_id}",
                     }
         run_id = req.get("run_id")
-        if run_id:
+        if run_id and "question" not in req:
             result_summary = result_from_manifest(self._get_base, tenant_id, loan_id, run_id)
             if result_summary is not None:
                 job_id = str(uuid.uuid4())
@@ -78,8 +79,9 @@ class JobService:
                 with self._lock:
                     self._jobs[job_id] = job
                     self._key_index.set(job_key, job_id)
-                self._store.save(job)
-                return {"job_id": job_id, "status": "SUCCESS", "status_url": f"/jobs/{job_id}"}
+        job["stdout"] = f"PHASE:DONE {_utc_now_z()}\n"
+        self._store.save(job)
+        return {"job_id": job_id, "status": "SUCCESS", "status_url": f"/jobs/{job_id}"}
         job_id = str(uuid.uuid4())
         job = {
             "job_id": job_id,
@@ -101,9 +103,13 @@ class JobService:
             self._jobs[job_id] = job
             self._key_index.set(job_key, job_id)
         self._store.save(job)
-        t = threading.Thread(target=self._run_worker, args=(job_id,), daemon=True)
-        t.start()
         return {"job_id": job_id, "status": "PENDING", "status_url": f"/jobs/{job_id}"}
+
+    def _append_phase(self, job: dict[str, Any], name: str) -> None:
+        """Append one phase marker line to job stdout (caller holds self._lock)."""
+        current = job.get("stdout") or ""
+        line = f"PHASE:{name} {_utc_now_z()}\n"
+        job["stdout"] = _truncate(current + line, STDOUT_TRUNCATE)
 
     def _run_worker(self, job_id: str) -> None:
         import subprocess
@@ -125,6 +131,7 @@ class JobService:
                     self._jobs[job_id]["status"] = "FAIL"
                     self._jobs[job_id]["finished_at_utc"] = _utc_now_z()
                     self._jobs[job_id]["error"] = _truncate(str(e), ERROR_TRUNCATE)
+                    self._append_phase(self._jobs[job_id], "FAIL")
                     self._store.save(dict(self._jobs[job_id]))
             return
         try:
@@ -150,6 +157,7 @@ class JobService:
                     self._jobs[job_id]["status"] = "FAIL"
                     self._jobs[job_id]["finished_at_utc"] = _utc_now_z()
                     self._jobs[job_id]["error"] = _truncate(f"Job timed out after {timeout}s", ERROR_TRUNCATE)
+                    self._append_phase(self._jobs[job_id], "FAIL")
                     self._store.save(dict(self._jobs[job_id]))
             return
         except Exception as e:
@@ -158,6 +166,7 @@ class JobService:
                     self._jobs[job_id]["status"] = "FAIL"
                     self._jobs[job_id]["finished_at_utc"] = _utc_now_z()
                     self._jobs[job_id]["error"] = _truncate(str(e), ERROR_TRUNCATE)
+                    self._append_phase(self._jobs[job_id], "FAIL")
                     self._store.save(dict(self._jobs[job_id]))
             return
         finally:
@@ -165,7 +174,12 @@ class JobService:
                 self._loan_lock.release(tenant_id, loan_id)
         resolved_run_id = request.get("run_id") or parse_run_id_from_stdout(stdout)
         result_summary: dict[str, Any] = {}
-        if resolved_run_id:
+        if "question" in request:
+            base = self._get_base()
+            run_dir = base / "tenants" / tenant_id / "loans" / loan_id / resolved_run_id if resolved_run_id else None
+            result_summary["outputs_base"] = str(run_dir) if run_dir else None
+            result_summary["status"] = "SUCCESS" if returncode == 0 else "FAIL"
+        elif resolved_run_id:
             manifest = load_manifest_if_present(self._get_base, tenant_id, loan_id, resolved_run_id)
             if manifest:
                 base = self._get_base()
@@ -190,6 +204,7 @@ class JobService:
                 self._jobs[job_id]["error"] = _truncate(err, ERROR_TRUNCATE)
                 if result_summary:
                     self._jobs[job_id]["result"] = result_summary
+                self._append_phase(self._jobs[job_id], "FAIL")
             self._store.save(dict(self._jobs[job_id]))
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:

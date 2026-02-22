@@ -1,6 +1,6 @@
 # MortgageDocAI — Project Status
 
-**Last Updated:** 2026-02-15
+**Last Updated:** 2026-02-21
 
 ## Current phase & AI context
 
@@ -113,6 +113,7 @@ Pipeline steps:
 - Retrieval packs written under `retrieve/<pipeline_run_id>/retrieval_pack.json`
 - Step12 auto-triggers Step13 if retrieval pack is missing
 - Re-runs for same `run_id` overwrite cleanly
+- **Loan API (FastAPI):** health, list tenants/loans/runs, sync query, pipeline jobs, query jobs, artifacts index and artifact downloads; optional API key and tenant allowlist (see Loan API section below)
 
 ---
 
@@ -1054,6 +1055,71 @@ RUN_INCOME_ANALYSIS=1 RUN_UW_DECISION=1 EXPECT_DTI=1 RUN_ID=2026-02-13T073441Z b
 - `citations` has `pitia`, `liabilities`, `income_primary` keys
 - `answer.json`, `answer.md`, `decision.md` exist
 - `outputs/_meta/version.json` exists
+
+---
+
+## Loan API (FastAPI) — 2026-02-17
+
+Minimal local-only HTTP service for loan analysis: list tenants/loans/runs, sync query, background pipeline jobs, background query jobs, artifact index and downloads. Optional API key and tenant allowlist for security.
+
+### Entry point
+
+- **scripts/loan_api.py** — Standalone FastAPI app with in-memory job registry. No cloud; no Redis/DB/Celery. Jobs lost on restart.
+- Run: `python3 scripts/loan_api.py --host 127.0.0.1 --port 8000` (use `--host 0.0.0.0` for LAN access, e.g. from Windows to 10.10.10.190:8000).
+
+### Endpoints (unchanged paths and success response shapes)
+
+| Method | Path | Description |
+|--------|------|--------------|
+| GET | `/` | Service info and links |
+| GET | `/health` | `{"status":"ok"}` |
+| GET | `/tenants/{tenant_id}/loans` | List loan IDs |
+| POST | `/tenants/{tenant_id}/loans/{loan_id}/runs` | Start run (fire-and-forget) |
+| GET | `/tenants/{tenant_id}/loans/{loan_id}/runs` | List run IDs |
+| GET | `/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}` | Run status (job_manifest.json) |
+| POST | `/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/query` | **Sync** query (Step13 + Step12, returns answer JSON) |
+| POST | `/tenants/{tenant_id}/loans/{loan_id}/jobs` | Submit **pipeline** job → 202 + job_id |
+| POST | `/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/query_jobs` | Submit **query** job → 202 + job_id |
+| GET | `/jobs/{job_id}` | Job status (PENDING/RUNNING/SUCCESS/FAIL) |
+| GET | `/jobs` | List jobs (optional ?status=, ?limit=) |
+
+### Artifacts index and downloads
+
+- **GET** `/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/artifacts` — Deterministic JSON index of what exists on disk: `base_dir`, `retrieval_pack` (path, sha256, exists), `job_manifest` (path, exists, status), `profiles[]` (name, dir, files[] with name/path/exists/size_bytes/mtime_utc). Profiles and file lists are sorted for determinism.
+- **GET** `/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/artifacts/{profile}/{filename}` — Download a profile artifact. `filename` must be in allow-list: `answer.json`, `answer.md`, `citations.jsonl`, `income_analysis.json`, `dti.json`, `decision.json`, `decision.md`, `version.json`. Returns 404 "Run not found" or "Artifact not found"; path traversal blocked.
+- **GET** `/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/retrieval_pack` — Download `retrieval_pack.json`.
+- **GET** `/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/job_manifest` — Download `job_manifest.json`.
+
+### Background jobs
+
+- **Pipeline jobs** (POST `.../jobs`): Body includes `run_id`, `skip_intake`, `skip_process`, `offline_embeddings`, `top_k`, `max_per_file`, `max_dropped_chunks`, `expect_rp_hash_stable`, `smoke_debug`, `llm_model`, `timeout`. A daemon thread runs `run_loan_job.py` with matching CLI flags. Idempotency: same (tenant_id, loan_id, request body) returns same job_id when status is PENDING/RUNNING/SUCCESS.
+
+**Progress phases (2026-02-21):** Job `stdout` includes deterministic phase markers so a desktop client can show progress. Format: one line per transition, `PHASE:<NAME> <UTC_ISO_Z>`. Phase names (in order): `INTAKE`, `PROCESS`, `STEP13_GENERAL`, `STEP13_INCOME`, `STEP12_INCOME_ANALYSIS`, `STEP12_UW_DECISION`, `DONE` (success), `FAIL` (on failure). Emitted by `run_loan_job.py` during the pipeline; workers append `PHASE:FAIL` when the job fails from timeout or exception (no subprocess stdout). Manifest short-circuit emits `PHASE:DONE` only. No new API keys; progress is observable via existing `stdout` (and `stderr`/`error`/`result`).
+- **Query jobs** (POST `.../runs/{run_id}/query_jobs`): Body matches sync query: `question`, `profile`, `llm_model`, `offline_embeddings`, `top_k`, `max_per_file`. Profile must be one of: `default`, `uw_conditions`, `income_analysis`, `uw_decision`. Runner executes Step13 then Step12 (one overall timeout split between steps). Success = Step12 returncode 0. No manifest short-circuit; result has `outputs_base` and `status` only. Fetch answer via artifact endpoint: `.../artifacts/{profile}/answer.json`.
+
+### run_loan_job.py execution options (used by API/worker)
+
+When the API or a job worker runs `run_loan_job.py`, the following flags are supported and propagated:
+
+- `--run-llm` / `--no-run-llm` — Default: run LLM. With `--no-run-llm`, Step12 receives `RUN_LLM=0` (deterministic-only).
+- `--expect-rp-hash-stable` — Rerun general Step13 and fail if retrieval_pack.json sha256 changes.
+- `--max-dropped-chunks N` — Fail if income-focused Step13 reports `dropped_chunk_ids_count` > N.
+- `--debug` — Pass debug to steps (smoke_debug).
+- `--offline-embeddings` — Pass to Step13.
+- `--top-k N`, `--max-per-file N` — Override Step13 defaults (80/120 and 12 for income).
+
+Short-circuit: if `--run-id` is supplied and `job_manifest.json` already exists with status SUCCESS, the script exits 0 without running the pipeline. Manifest includes `options`: `run_llm`, `expect_rp_hash_stable`, `max_dropped_chunks`, `smoke_debug`, `offline_embeddings`, `top_k`, `max_per_file`.
+
+### API security (optional)
+
+Applied via middleware in `loan_api.py` (no new dependencies; uses Starlette).
+
+- **API key:** Env `MORTGAGEDOCAI_API_KEY`. If **set and non-empty**, every request must include header `X-API-Key` with the exact value; otherwise **401** with body `{"detail":"Unauthorized"}`. If unset or empty, all requests are allowed (dev mode). Applies to all routes including `/docs` and `/openapi.json`.
+- **Tenant allowlist:** Env `MORTGAGEDOCAI_ALLOWED_TENANTS` — comma-separated list (e.g. `peak,acme`). If **set and non-empty**, any path with `{tenant_id}` (e.g. `/tenants/peak/loans`) must have `tenant_id` in the list; otherwise **404** with body `{"detail":"Not Found"}` (not 403, to avoid leaking that the tenant is forbidden). If unset or empty, any tenant is allowed.
+
+### Alternative: disk-backed job service (loan_service)
+
+If the app is wired to use `loan_service` (JobService, DiskJobStore, SubprocessRunner) instead of the in-memory loan_api.py implementation, the same endpoint paths and response shapes apply. Query jobs and pipeline jobs are executed by `adapters_subprocess.SubprocessRunner` (query jobs: Step13 + Step12; pipeline jobs: `run_loan_job.py`). Manifest short-circuit and tenant/request idempotency are handled in `service.py`.
 
 ---
 
