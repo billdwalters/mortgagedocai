@@ -1,0 +1,481 @@
+/* MortgageDocAI — Client Mode v1 (Loan Processor UI) */
+
+:root {
+  --bg: #1a1a1e;
+  --surface: #25252c;
+  --text: #e4e4e7;
+  --muted: #a1a1aa;
+  --accent: #7c3aed;
+  --success: #22c55e;
+  --error: #ef4444;
+  --warn: #eab308;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* ——— Header ——— */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.header-title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.connection-indicator {
+  font-size: 0.875rem;
+  margin-left: auto;
+}
+.connection-ok { color: var(--success); }
+.connection-unauthorized { color: var(--error); }
+.connection-offline { color: var(--muted); }
+
+.btn-icon {
+  padding: 0.35rem 0.6rem;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.2);
+  color: var(--text);
+  border-radius: 4px;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.btn-icon:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+/* ——— Settings panel (collapsed by default) ——— */
+.settings-panel {
+  padding: 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.settings-panel h2 {
+  margin: 0 0 0.75rem 0;
+  font-size: 1rem;
+  color: var(--muted);
+}
+.settings-panel label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+}
+.settings-panel input[type="text"],
+.settings-panel input[type="password"],
+.settings-panel input[type="number"] {
+  display: block;
+  width: 100%;
+  max-width: 400px;
+  margin-top: 0.25rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+.settings-actions {
+  margin-top: 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+}
+.settings-actions button {
+  padding: 0.5rem 0.75rem;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.settings-test-result.error { color: var(--error); }
+.settings-advanced {
+  margin-top: 1rem;
+  font-size: 0.875rem;
+}
+.settings-advanced summary { cursor: pointer; }
+
+/* ——— App layout ——— */
+.app-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 0;
+  min-height: calc(100vh - 52px);
+}
+
+@media (max-width: 700px) {
+  .app-layout { grid-template-columns: 1fr; }
+}
+
+/* ——— Sidebar: Loans ——— */
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid rgba(255,255,255,0.06);
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.btn-primary {
+  padding: 0.5rem 0.75rem;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.btn-primary:hover { opacity: 0.9; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-secondary {
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.btn-secondary:hover { background: rgba(124, 58, 237, 0.1); }
+
+.btn-cta {
+  padding: 0.6rem 1rem;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-cta:hover { opacity: 0.9; }
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.875rem;
+  margin-left: 0.5rem;
+  padding: 0;
+}
+.btn-link:hover { text-decoration: underline; }
+
+.loan-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.loan-item {
+  padding: 0.75rem;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 0.25rem;
+  border: 1px solid transparent;
+}
+.loan-item:hover {
+  background: rgba(255,255,255,0.06);
+}
+.loan-item.selected {
+  background: rgba(124, 58, 237, 0.2);
+  border-color: var(--accent);
+}
+.loan-item .loan-id {
+  display: block;
+  font-weight: 600;
+  font-size: 1rem;
+}
+.loan-item .loan-last {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+.loan-item .loan-status {
+  display: block;
+  font-size: 0.75rem;
+  margin-top: 0.2rem;
+}
+.loan-item.error {
+  color: var(--error);
+}
+
+/* ——— Main ——— */
+.main {
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.section {
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 1rem;
+  border: 1px solid rgba(255,255,255,0.06);
+  margin-bottom: 1rem;
+}
+
+.section h2 {
+  margin: 0 0 0.75rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.section h3 {
+  margin: 1rem 0 0.25rem 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* Main overview */
+.main-overview .overview-loan-id {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.25rem;
+}
+.overview-row {
+  margin: 0.35rem 0;
+  font-size: 0.875rem;
+}
+.source-display {
+  color: var(--muted);
+  word-break: break-all;
+}
+.source-browse-panel {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.source-folder-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 4px;
+}
+.source-folder-list li {
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-size: 0.875rem;
+}
+.source-folder-list li:last-child { border-bottom: none; }
+.source-folder-list li:hover {
+  background: rgba(255,255,255,0.06);
+}
+.source-folder-list li.error {
+  color: var(--error);
+  cursor: default;
+}
+
+.source-edit-wrap {
+  margin-top: 0.5rem;
+}
+.source-edit-wrap input {
+  width: 100%;
+  max-width: 500px;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+.main-actions {
+  margin-top: 1rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.details-expand {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+}
+.details-expand summary { cursor: pointer; }
+.muted { color: var(--muted); }
+.small { font-size: 0.8rem; }
+
+/* ——— Progress panel ——— */
+.progress-panel .progress-status {
+  margin: 0 0 0.25rem 0;
+  font-size: 0.875rem;
+}
+.progress-times {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.8rem;
+}
+
+/* Stepper */
+.stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.75rem 0;
+}
+.stepper-step {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.05);
+  color: var(--muted);
+}
+.stepper-step.done {
+  background: rgba(34, 197, 94, 0.2);
+  color: var(--success);
+}
+.stepper-step.current {
+  background: var(--accent);
+  color: white;
+}
+
+.logs-details {
+  margin-top: 1rem;
+  font-size: 0.875rem;
+}
+.logs-details summary { cursor: pointer; }
+.scroll-box {
+  max-height: 180px;
+  overflow: auto;
+  padding: 0.5rem;
+  background: var(--bg);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0.25rem 0 0 0;
+}
+.monospace { font-family: ui-monospace, monospace; }
+
+/* ——— Artifacts ——— */
+.artifacts-index .profile-block {
+  margin-bottom: 0.75rem;
+}
+.artifacts-index .file-link {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: none;
+  margin-right: 0.75rem;
+  font-size: 0.875rem;
+}
+.artifacts-index .file-link:hover { text-decoration: underline; }
+.artifact-preview-wrap pre {
+  max-height: 320px;
+}
+
+/* ——— Chat ——— */
+.chat-messages {
+  min-height: 200px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 0.5rem 0;
+  margin-bottom: 0.75rem;
+}
+
+.chat-msg {
+  margin-bottom: 0.75rem;
+  max-width: 85%;
+}
+.chat-msg-user {
+  margin-left: auto;
+}
+.chat-msg-user .chat-msg-content {
+  background: var(--accent);
+  color: white;
+  padding: 0.5rem 0.75rem;
+  border-radius: 12px 12px 4px 12px;
+}
+.chat-msg-assistant .chat-msg-content {
+  background: rgba(255,255,255,0.06);
+  padding: 0.5rem 0.75rem;
+  border-radius: 12px 12px 12px 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-input-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.chat-profile-label {
+  font-size: 0.875rem;
+}
+.chat-profile-label select {
+  margin-left: 0.35rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+.chat-advanced {
+  font-size: 0.875rem;
+}
+.chat-advanced summary { cursor: pointer; }
+.chat-advanced input {
+  padding: 0.25rem 0.4rem;
+  background: var(--bg);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.875rem;
+  width: 140px;
+}
+
+.chat-send-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.chat-send-row input {
+  flex: 1;
+  max-width: 400px;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+.chat-send-row button {
+  padding: 0.5rem 1rem;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.chat-send-row button:hover { opacity: 0.9; }

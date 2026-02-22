@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -22,14 +23,17 @@ import subprocess
 import sys
 import threading
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, List
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.requests import Request
+from starlette.staticfiles import StaticFiles
 
 # ---------------------------------------------------------------------------
 # Paths (local-only; no cloud)
@@ -41,6 +45,9 @@ if str(_scripts_dir) not in sys.path:
 REPO_ROOT = _scripts_dir.parent
 SCRIPTS_DIR = _scripts_dir
 NAS_ANALYZE = Path("/mnt/nas_apps/nas_analyze")
+# Allowed root for source-folder browse (no listing outside this tree)
+SOURCE_LOANS_ROOT = Path("/mnt/source_loans")
+DEFAULT_SOURCE_BASE = "/mnt/source_loans/5-Borrowers TBD"
 
 STDOUT_TRUNCATE = 50_000
 STDERR_TRUNCATE = 50_000
@@ -60,10 +67,19 @@ _ALLOWED_TENANTS: set[str] = (
 # In-memory job registry (minimal; jobs lost on restart)
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
+# job_key -> job_id for idempotent POST /jobs
+JOB_KEY_INDEX: dict[str, str] = {}
 
 
 def _get_base_path() -> Path:
     return NAS_ANALYZE
+
+
+def _compute_job_key(tenant_id: str, loan_id: str, request: dict[str, Any]) -> str:
+    """Stable sha256 of tenant_id + loan_id + request for idempotency."""
+    payload = {"tenant_id": tenant_id, "loan_id": loan_id, "request": request}
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _utc_now_z() -> str:
@@ -138,6 +154,122 @@ def _is_loan_dir(name: str) -> bool:
     if not name or name.startswith("."):
         return False
     return name.replace("-", "").replace("_", "").isalnum() or name.isdigit()
+
+
+PROFILE_FILE_NAMES = (
+    "answer.json",
+    "answer.md",
+    "citations.jsonl",
+    "income_analysis.json",
+    "dti.json",
+    "decision.json",
+    "decision.md",
+    "version.json",
+)
+
+
+def _safe_single_component(name: str) -> bool:
+    if not name or ".." in name or "/" in name or "\\" in name:
+        return False
+    return True
+
+
+def _media_type_for_filename(filename: str) -> str:
+    if filename.endswith(".json") and filename != ".json":
+        return "application/json"
+    if filename.endswith(".jsonl"):
+        return "application/x-ndjson"
+    if filename.endswith(".md"):
+        return "text/markdown; charset=utf-8"
+    return "application/octet-stream"
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _build_artifacts_index(tenant_id: str, loan_id: str, run_id: str) -> dict[str, Any]:
+    base = NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id / run_id
+    if not base.is_dir():
+        raise FileNotFoundError("Run not found")
+    base_dir = str(base.resolve())
+    retrieve_base = NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id / "retrieve" / run_id
+    rp_path = retrieve_base / "retrieval_pack.json"
+    rp_exists = rp_path.is_file()
+    rp_sha256: str | None = None
+    if rp_exists:
+        try:
+            rp_sha256 = _sha256_file(rp_path)
+        except OSError:
+            pass
+    manifest_path = base / "job_manifest.json"
+    manifest_exists = manifest_path.is_file()
+    manifest_status: str | None = None
+    if manifest_exists:
+        try:
+            with manifest_path.open() as f:
+                manifest = json.load(f)
+            manifest_status = manifest.get("status") if isinstance(manifest, dict) else None
+        except (json.JSONDecodeError, OSError):
+            pass
+    retrieval_pack = {
+        "path": str(rp_path.resolve()) if rp_path.exists() else None,
+        "sha256": rp_sha256,
+        "exists": rp_exists,
+    }
+    job_manifest = {
+        "path": str(manifest_path.resolve()) if manifest_path.exists() else None,
+        "exists": manifest_exists,
+        "status": manifest_status,
+    }
+    profiles_dir = base / "outputs" / "profiles"
+    profiles_list: List[dict[str, Any]] = []
+    if profiles_dir.is_dir():
+        profile_dirs = sorted([d for d in profiles_dir.iterdir() if d.is_dir()])
+        for prof_dir in profile_dirs:
+            name = prof_dir.name
+            files_list: List[dict[str, Any]] = []
+            for fname in PROFILE_FILE_NAMES:
+                fpath = prof_dir / fname
+                exists = fpath.is_file()
+                entry: dict[str, Any] = {
+                    "name": fname,
+                    "path": str(fpath.resolve()),
+                    "exists": exists,
+                }
+                if exists:
+                    try:
+                        st = fpath.stat()
+                        entry["size_bytes"] = st.st_size
+                        entry["mtime_utc"] = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+                    except OSError:
+                        entry["size_bytes"] = None
+                        entry["mtime_utc"] = None
+                else:
+                    entry["size_bytes"] = None
+                    entry["mtime_utc"] = None
+                files_list.append(entry)
+            profiles_list.append({
+                "name": name,
+                "dir": str(prof_dir.resolve()),
+                "files": files_list,
+            })
+    return {
+        "tenant_id": tenant_id,
+        "loan_id": loan_id,
+        "run_id": run_id,
+        "base_dir": base_dir,
+        "retrieval_pack": retrieval_pack,
+        "job_manifest": job_manifest,
+        "profiles": profiles_list,
+    }
 
 
 def _run_job_worker(job_id: str, tenant_id: str, loan_id: str, request: dict[str, Any]) -> None:
@@ -272,6 +404,7 @@ class SubmitJobBody(BaseModel):
     expect_rp_hash_stable: bool = False
     smoke_debug: bool = False
     llm_model: str | None = None
+    run_llm: bool | None = None
     timeout: int | None = Field(None, description="Subprocess timeout in seconds (default 3600)")
 
 
@@ -291,19 +424,27 @@ app = FastAPI(title="MortgageDocAI Loan API", description="Local-only loan analy
 
 
 class _SecurityMiddleware(BaseHTTPMiddleware):
-    """Require X-API-Key when MORTGAGEDOCAI_API_KEY is set; 404 when tenant_id not in MORTGAGEDOCAI_ALLOWED_TENANTS."""
+    """Require X-API-Key when MORTGAGEDOCAI_API_KEY is set; 404 when tenant_id not in MORTGAGEDOCAI_ALLOWED_TENANTS.
+    /ui and /ui/static are exempt so the UI can load; the page then sends the key on API calls."""
+    _UI_PREFIX = "/ui"
 
     async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if path == self._UI_PREFIX or path.startswith(self._UI_PREFIX + "/"):
+            return await call_next(request)
         if _API_KEY:
             key = request.headers.get("X-API-Key") or ""
             if key != _API_KEY:
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
         if _ALLOWED_TENANTS:
-            parts = request.url.path.strip("/").split("/")
+            parts = path.strip("/").split("/")
             if len(parts) >= 2 and parts[0] == "tenants":
                 tenant_id = parts[1]
                 if tenant_id not in _ALLOWED_TENANTS:
-                    return JSONResponse(status_code=404, content={"detail": "Not Found"})
+                    return JSONResponse(
+                        status_code=404,
+                        content={"detail": "Tenant not in allowed list", "tenant_id": tenant_id},
+                    )
         return await call_next(request)
 
 
@@ -318,12 +459,28 @@ def root() -> dict[str, Any]:
         "health": "/health",
         "tenants": "/tenants/{tenant_id}/loans",
         "jobs": "/tenants/{tenant_id}/loans/{loan_id}/jobs",
+        "ui": "/ui",
     }
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/browse/source")
+def browse_source(base: str = DEFAULT_SOURCE_BASE) -> dict[str, Any]:
+    """List direct subdirectories under an allowed source path. base must be under SOURCE_LOANS_ROOT."""
+    base_path = Path(base.strip()).resolve()
+    try:
+        root_resolved = SOURCE_LOANS_ROOT.resolve()
+        base_path.relative_to(root_resolved)
+    except (ValueError, OSError):
+        raise HTTPException(status_code=400, detail="base path must be under " + str(SOURCE_LOANS_ROOT))
+    if not base_path.is_dir():
+        raise HTTPException(status_code=404, detail="Path not found or not a directory")
+    folders = [d.name for d in sorted(base_path.iterdir()) if d.is_dir() and not d.name.startswith(".")]
+    return {"base": str(base_path), "folders": folders}
 
 
 @app.get("/tenants/{tenant_id}/loans")
@@ -403,6 +560,70 @@ def get_run_status(tenant_id: str, loan_id: str, run_id: str) -> dict[str, Any]:
             return json.load(f)
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"Invalid JSON in {manifest_path}: {e}")
+
+
+@app.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/artifacts")
+def get_run_artifacts(tenant_id: str, loan_id: str, run_id: str) -> dict[str, Any]:
+    try:
+        return _build_artifacts_index(tenant_id, loan_id, run_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+
+@app.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/artifacts/{profile}/{filename}")
+def get_profile_artifact(
+    tenant_id: str, loan_id: str, run_id: str, profile: str, filename: str
+) -> FileResponse:
+    base = NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id / run_id
+    if not base.is_dir():
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not _safe_single_component(profile) or not _safe_single_component(filename):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    if filename not in PROFILE_FILE_NAMES:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    profiles_base = (base / "outputs" / "profiles").resolve()
+    candidate = (profiles_base / profile / filename).resolve()
+    try:
+        candidate.relative_to(profiles_base)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return FileResponse(
+        path=str(candidate),
+        media_type=_media_type_for_filename(filename),
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@app.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/retrieval_pack")
+def get_retrieval_pack(tenant_id: str, loan_id: str, run_id: str) -> FileResponse:
+    rp_path = (
+        NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id
+        / "retrieve" / run_id / "retrieval_pack.json"
+    )
+    if not rp_path.is_file():
+        raise HTTPException(status_code=404, detail="Retrieval pack not found")
+    return FileResponse(
+        path=str(rp_path.resolve()),
+        media_type="application/json",
+        headers={"Content-Disposition": 'inline; filename="retrieval_pack.json"'},
+    )
+
+
+@app.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/job_manifest")
+def get_job_manifest(tenant_id: str, loan_id: str, run_id: str) -> FileResponse:
+    manifest_path = (
+        NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id / run_id
+        / "job_manifest.json"
+    )
+    if not manifest_path.is_file():
+        raise HTTPException(status_code=404, detail="Job manifest not found")
+    return FileResponse(
+        path=str(manifest_path.resolve()),
+        media_type="application/json",
+        headers={"Content-Disposition": 'inline; filename="job_manifest.json"'},
+    )
 
 
 @app.post("/tenants/{tenant_id}/loans/{loan_id}/runs/start", status_code=202)
@@ -531,9 +752,29 @@ def query_run(tenant_id: str, loan_id: str, run_id: str, body: QueryBody) -> dic
 
 @app.post("/tenants/{tenant_id}/loans/{loan_id}/jobs", status_code=202)
 def submit_job(tenant_id: str, loan_id: str, body: SubmitJobBody) -> dict[str, Any]:
-    job_id = str(uuid.uuid4())
+    if not body.skip_intake and not body.source_path:
+        raise HTTPException(
+            status_code=422,
+            detail="source_path is required when skip_intake is False (run_loan_job.py contract)",
+        )
+    if body.skip_process and not body.run_id:
+        raise HTTPException(
+            status_code=422,
+            detail="run_id is required when skip_process is True (run_loan_job.py contract)",
+        )
     request = body.model_dump()
+    job_key = _compute_job_key(tenant_id, loan_id, request)
     with JOBS_LOCK:
+        existing_id = JOB_KEY_INDEX.get(job_key)
+        if existing_id:
+            existing = JOBS.get(existing_id)
+            if existing and existing.get("status") in ("PENDING", "RUNNING", "SUCCESS"):
+                return {
+                    "job_id": existing_id,
+                    "status": existing["status"],
+                    "status_url": f"/jobs/{existing_id}",
+                }
+        job_id = str(uuid.uuid4())
         JOBS[job_id] = {
             "job_id": job_id,
             "tenant_id": tenant_id,
@@ -549,6 +790,7 @@ def submit_job(tenant_id: str, loan_id: str, body: SubmitJobBody) -> dict[str, A
             "stdout": None,
             "stderr": None,
         }
+        JOB_KEY_INDEX[job_key] = job_id
     t = threading.Thread(
         target=_run_job_worker,
         args=(job_id, tenant_id, loan_id, request),
@@ -579,6 +821,23 @@ def list_jobs(limit: int = 50, status: str | None = None) -> dict[str, list[dict
         jobs = [j for j in jobs if j.get("status") == status]
     jobs = sorted(jobs, key=lambda j: j.get("created_at_utc") or "", reverse=True)[:limit]
     return {"jobs": [{k: v for k, v in j.items() if v is not None} for j in jobs]}
+
+
+# ---------------------------------------------------------------------------
+# Web UI (static single-page app)
+# ---------------------------------------------------------------------------
+WEBUI_DIR = SCRIPTS_DIR / "webui"
+
+
+@app.get("/ui")
+def serve_ui() -> FileResponse:
+    index_path = WEBUI_DIR / "index.html"
+    if not index_path.is_file():
+        raise HTTPException(status_code=404, detail="UI not found")
+    return FileResponse(path=str(index_path.resolve()), media_type="text/html")
+
+
+app.mount("/ui/static", StaticFiles(directory=str(WEBUI_DIR)), name="webui_static")
 
 
 # ---------------------------------------------------------------------------

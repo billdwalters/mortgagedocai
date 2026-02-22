@@ -79,9 +79,9 @@ class JobService:
                 with self._lock:
                     self._jobs[job_id] = job
                     self._key_index.set(job_key, job_id)
-        job["stdout"] = f"PHASE:DONE {_utc_now_z()}\n"
-        self._store.save(job)
-        return {"job_id": job_id, "status": "SUCCESS", "status_url": f"/jobs/{job_id}"}
+                job["stdout"] = f"PHASE:DONE {_utc_now_z()}\n"
+                self._store.save(job)
+                return {"job_id": job_id, "status": "SUCCESS", "status_url": f"/jobs/{job_id}"}
         job_id = str(uuid.uuid4())
         job = {
             "job_id": job_id,

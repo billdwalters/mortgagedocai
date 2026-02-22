@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MortgageDocAI</title>
+  <link rel="stylesheet" href="/ui/static/styles.css">
+</head>
+<body>
+  <header class="header">
+    <h1 class="header-title">MortgageDocAI</h1>
+    <span id="connection-indicator" class="connection-indicator" aria-live="polite">—</span>
+    <button type="button" id="settings-toggle" class="btn-icon" title="Settings">&#9881; Settings</button>
+  </header>
+
+  <div id="settings-panel" class="settings-panel" hidden>
+    <h2>Settings</h2>
+    <label>Base URL <input id="base-url" type="text" placeholder="Leave empty for same origin"></label>
+    <label>API Key <input id="api-key" type="password" placeholder="Optional"></label>
+    <label>Tenant ID <input id="tenant-id" type="text" value="peak"></label>
+    <div class="settings-actions">
+      <button type="button" id="settings-save">Save</button>
+      <button type="button" id="settings-test">Test Connection</button>
+    </div>
+    <p id="settings-test-result" class="muted" hidden></p>
+    <details class="settings-advanced">
+      <summary>Advanced</summary>
+      <label><input id="adv-offline-embeddings" type="checkbox" checked> offline_embeddings</label>
+      <label>top_k <input id="adv-top-k" type="number" value="80"></label>
+      <label>max_per_file <input id="adv-max-per-file" type="number" value="12"></label>
+      <label>max_dropped_chunks <input id="adv-max-dropped-chunks" type="number" value="5"></label>
+      <label><input id="adv-expect-rp-hash-stable" type="checkbox" checked> expect_rp_hash_stable</label>
+      <label><input id="adv-smoke-debug" type="checkbox"> smoke_debug</label>
+    </details>
+  </div>
+
+  <div class="app-layout">
+    <aside class="sidebar">
+      <section class="sidebar-section">
+        <button type="button" id="refresh-loans" class="btn-primary">Refresh Loans</button>
+        <ul id="loan-list" class="loan-list"></ul>
+      </section>
+    </aside>
+
+    <main class="main">
+      <section id="main-overview" class="section main-overview" hidden>
+        <h2 id="overview-loan-id" class="overview-loan-id"></h2>
+        <p class="overview-row"><strong>Last processed:</strong> <span id="overview-last-processed">Unknown</span></p>
+        <p class="overview-row">
+          <strong>Source folder:</strong>
+          <span id="source-display" class="source-display"></span>
+          <button type="button" id="source-browse-btn" class="btn-link">Browse…</button>
+          <button type="button" id="source-change-btn" class="btn-link">Change…</button>
+          <button type="button" id="source-show-path-btn" class="btn-link">Show path</button>
+        </p>
+        <div id="source-browse-panel" class="source-browse-panel" hidden>
+          <p class="muted small">Click a folder to use as source path:</p>
+          <p id="source-browse-base" class="small"></p>
+          <ul id="source-folder-list" class="source-folder-list"></ul>
+          <button type="button" id="source-browse-close" class="btn-link">Close</button>
+        </div>
+        <div id="source-edit-wrap" class="source-edit-wrap" hidden>
+          <input id="source-path-input" type="text" placeholder="/mnt/source_loans/5-Borrowers TBD/...">
+        </div>
+        <div class="main-actions">
+          <button type="button" id="process-loan-btn" class="btn-cta">Process Loan</button>
+          <button type="button" id="view-artifacts-btn" class="btn-secondary">View Artifacts</button>
+        </div>
+        <details id="details-expand" class="details-expand">
+          <summary>Details</summary>
+          <p id="details-run-id" class="muted small"></p>
+        </details>
+      </section>
+
+      <section id="progress-panel" class="section progress-panel" hidden>
+        <h2>Progress</h2>
+        <p class="progress-status"><strong>Status</strong> <span id="progress-status-value">—</span></p>
+        <p class="progress-times muted small">Started: <span id="progress-started">—</span> Finished: <span id="progress-finished">—</span></p>
+        <div id="stepper" class="stepper"></div>
+        <details class="logs-details">
+          <summary>Logs</summary>
+          <pre id="log-stdout" class="scroll-box monospace"></pre>
+          <pre id="log-stderr" class="scroll-box monospace"></pre>
+          <pre id="log-error" class="scroll-box monospace" hidden></pre>
+        </details>
+      </section>
+
+      <section id="artifacts-panel" class="section artifacts-panel" hidden>
+        <h2>Artifacts</h2>
+        <div id="artifacts-index" class="artifacts-index"></div>
+        <div id="artifact-preview-wrap" class="artifact-preview-wrap" hidden>
+          <h3>Preview</h3>
+          <pre id="artifact-preview-content" class="scroll-box monospace"></pre>
+        </div>
+      </section>
+
+      <section id="chat-panel" class="section chat-panel">
+        <h2>Ask a question</h2>
+        <div id="chat-messages" class="chat-messages"></div>
+        <div class="chat-input-row">
+          <label class="chat-profile-label">Profile
+            <select id="chat-profile">
+              <option value="default">Default</option>
+              <option value="income_analysis">Income Analysis</option>
+              <option value="uw_decision">UW Decision</option>
+              <option value="uw_conditions">UW Conditions</option>
+            </select>
+          </label>
+          <details class="chat-advanced">
+            <summary>Advanced</summary>
+            <label>llm_model <input id="chat-llm-model" type="text" placeholder="e.g. mistral"></label>
+          </details>
+        </div>
+        <div class="chat-send-row">
+          <input id="chat-input" type="text" placeholder="Type your question…">
+          <button type="button" id="chat-send">Send</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/ui/static/app.js"></script>
+</body>
+</html>
