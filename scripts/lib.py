@@ -243,30 +243,31 @@ def _source_mount_is_effectively_ro() -> bool:
 
     return any(_opts_has_ro(opts) for (_, opts) in backing)
 
-def preflight_mount_contract() -> None:
-    # Source mount exists and is RO
-    if not _is_mountpoint(SOURCE_MOUNT):
-        raise ContractError(f"SOURCE_MOUNT not mounted: {SOURCE_MOUNT}")
+def preflight_mount_contract(skip_source_check: bool = False) -> None:
+    # Source mount exists and is RO (skip when query-only, e.g. API "Ask a question" — no read from source)
+    if not skip_source_check:
+        if not _is_mountpoint(SOURCE_MOUNT):
+            raise ContractError(f"SOURCE_MOUNT not mounted: {SOURCE_MOUNT}")
 
-    if not _source_mount_is_effectively_ro():
-        fstype = _findmnt_fstype(SOURCE_MOUNT)
-        if fstype == "autofs":
-            # Re-read backing entries for diagnostic message
-            entries = _mount_entries_for_target(SOURCE_MOUNT)
-            backing = [(fst, opts) for (fst, opts) in entries if fst != "autofs"]
-            if not backing:
-                raise ContractError(
-                    f"SOURCE_MOUNT autofs present but backing mount not materialized: {SOURCE_MOUNT}"
+        if not _source_mount_is_effectively_ro():
+            fstype = _findmnt_fstype(SOURCE_MOUNT)
+            if fstype == "autofs":
+                # Re-read backing entries for diagnostic message
+                entries = _mount_entries_for_target(SOURCE_MOUNT)
+                backing = [(fst, opts) for (fst, opts) in entries if fst != "autofs"]
+                if not backing:
+                    raise ContractError(
+                        f"SOURCE_MOUNT autofs present but backing mount not materialized: {SOURCE_MOUNT}"
+                    )
+                backing_info = ", ".join(
+                    f"{fst}({','.join(sorted(opts))})" for fst, opts in backing
                 )
-            backing_info = ", ".join(
-                f"{fst}({','.join(sorted(opts))})" for fst, opts in backing
-            )
-            raise ContractError(
-                f"SOURCE_MOUNT backing mount must be ro. backing=[{backing_info}]"
-            )
-        else:
-            opts = _findmnt_options(SOURCE_MOUNT)
-            raise ContractError(f"SOURCE_MOUNT must be ro. findmnt_OPTIONS={opts}")
+                raise ContractError(
+                    f"SOURCE_MOUNT backing mount must be ro. backing=[{backing_info}]"
+                )
+            else:
+                opts = _findmnt_options(SOURCE_MOUNT)
+                raise ContractError(f"SOURCE_MOUNT must be ro. findmnt_OPTIONS={opts}")
 
     # NAS mounts exist, writable, and not rootfs
     root_src = _findmnt_source(Path("/"))

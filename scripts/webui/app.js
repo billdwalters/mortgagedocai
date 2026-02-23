@@ -9,7 +9,6 @@
   const STORAGE_TENANT = "mortgagedocai_tenant_id";
   const STORAGE_BASE_URL = "mortgagedocai_base_url";
   const SOURCE_PATH_PREFIX = "mortgagedocai_source_path_";
-  const DEFAULT_SOURCE_BASE = "/mnt/source_loans/5-Borrowers TBD";
   const POLL_INTERVAL_MS = 2000;
 
   /** Run ID heuristic: looks like timestamp (contains T, ends with Z) or matches YYYY-MM-DDTHH... */
@@ -256,34 +255,48 @@
   let selectedLoanId = null;
   let selectedRunId = null;
   let currentJobId = null;
+  /** After refresh: loan_id -> source_loans item (source_path, last_processed_utc, etc.) */
+  let sourceLoanItemsByLoanId = {};
 
-  // ——— Loans list ———
+  // ——— Loans list (source-of-truth from GET /tenants/{tenant}/source_loans) ———
   async function refreshLoans() {
     const listEl = el("loan-list");
     if (!listEl) return;
     listEl.innerHTML = "";
     selectedLoanId = null;
     selectedRunId = null;
+    sourceLoanItemsByLoanId = {};
     hideMainOverview();
+    updateProcessLoanButton();
     try {
-      const data = await apiJson("/tenants/" + encodeURIComponent(getTenantId()) + "/loans");
-      const ids = (data && Array.isArray(data.loan_ids)) ? data.loan_ids : [];
-      ids.sort();
-      for (let i = 0; i < ids.length; i++) {
-        const loanId = ids[i];
-        const last = await getLastProcessedForLoan(loanId);
+      const data = await apiJson("/tenants/" + encodeURIComponent(getTenantId()) + "/source_loans");
+      const items = (data && Array.isArray(data.items)) ? data.items : [];
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        sourceLoanItemsByLoanId[it.loan_id] = it;
         const li = document.createElement("li");
         li.className = "loan-item";
-        li.dataset.loanId = loanId;
-        const lastText = last ? (last.generated_at_utc || last.run_id) : "Never";
-        // TODO: will compute needs-reprocess once we have a server endpoint for source folder mtime
-        const statusChip = "&#10067; Unknown";
-        li.innerHTML = "<span class=\"loan-id\">" + escapeHtml(loanId) + "</span><span class=\"loan-last\">" + escapeHtml(lastText) + "</span><span class=\"loan-status\">" + statusChip + "</span>";
+        li.dataset.loanId = it.loan_id;
+        const lastText = (it.last_processed_utc != null && it.last_processed_utc !== "") ? it.last_processed_utc : "Never";
+        const badge = it.needs_reprocess ? "Needs Processing" : "Up to date";
+        const badgeClass = it.needs_reprocess ? "loan-badge needs-processing" : "loan-badge up-to-date";
+        li.innerHTML =
+          "<span class=\"loan-id\">" + escapeHtml(it.loan_id) + "</span>" +
+          "<span class=\"loan-folder-name small\">" + escapeHtml(it.folder_name || "") + "</span>" +
+          "<span class=\"loan-meta small\">Source: " + escapeHtml(it.source_last_modified_utc || "") + "</span>" +
+          "<span class=\"loan-meta small\">Processed: " + escapeHtml(lastText) + "</span>" +
+          "<span class=\"" + badgeClass + "\">" + escapeHtml(badge) + "</span>";
         li.addEventListener("click", function () {
-          selectLoan(loanId);
+          selectLoan(it.loan_id);
           document.querySelectorAll(".loan-item").forEach(function (n) { n.classList.remove("selected"); });
           li.classList.add("selected");
         });
+        listEl.appendChild(li);
+      }
+      if (items.length === 0) {
+        const li = document.createElement("li");
+        li.className = "loan-item muted";
+        li.textContent = "No source loans found.";
         listEl.appendChild(li);
       }
     } catch (e) {
@@ -292,6 +305,11 @@
       li.textContent = "Error: " + (e.message || e);
       listEl.appendChild(li);
     }
+  }
+
+  function updateProcessLoanButton() {
+    const btn = el("process-loan-btn");
+    if (btn) btn.disabled = !selectedLoanId;
   }
 
   function escapeHtml(s) {
@@ -308,22 +326,30 @@
   async function selectLoan(loanId) {
     selectedLoanId = loanId;
     selectedRunId = null;
-    const last = await getLastProcessedForLoan(loanId);
-    if (last) selectedRunId = last.run_id;
+    const item = sourceLoanItemsByLoanId[loanId];
     const main = el("main-overview");
     if (main) main.hidden = false;
     if (el("overview-loan-id")) el("overview-loan-id").textContent = "Loan " + loanId;
-    if (el("overview-last-processed")) el("overview-last-processed").textContent = last ? (last.generated_at_utc || last.run_id) : "Unknown";
-    const storedPath = getSourcePathForLoan(loanId);
     const pathInput = el("source-path-input");
-    if (pathInput) {
-      pathInput.value = storedPath || DEFAULT_SOURCE_BASE;
-      pathInput.placeholder = DEFAULT_SOURCE_BASE + "/...";
-    }
     const display = el("source-display");
-    if (display) display.textContent = storedPath || "(not set — click Browse…)";
+    if (item && item.source_path) {
+      if (pathInput) pathInput.value = item.source_path;
+      if (display) display.textContent = item.source_path;
+      setSourcePathForLoan(loanId, item.source_path);
+      if (el("overview-last-processed")) el("overview-last-processed").textContent = (item.last_processed_utc != null && item.last_processed_utc !== "") ? item.last_processed_utc : "Never";
+      if (item.last_processed_run_id) selectedRunId = item.last_processed_run_id;
+    } else {
+      const storedPath = getSourcePathForLoan(loanId);
+      if (pathInput) pathInput.value = storedPath || "";
+      if (display) display.textContent = storedPath || "(select a loan from source list)";
+      if (el("overview-last-processed")) el("overview-last-processed").textContent = "Unknown";
+      const last = await getLastProcessedForLoan(loanId);
+      if (last) selectedRunId = last.run_id;
+    }
+    if (pathInput) pathInput.placeholder = "/mnt/source_loans/.../Folder [Loan 123]";
     const detailsRun = el("details-run-id");
     if (detailsRun) detailsRun.textContent = selectedRunId ? "run_id: " + selectedRunId : "";
+    updateProcessLoanButton();
   }
 
   // ——— Source path edit and browse ———
@@ -361,7 +387,7 @@
 
     if (browseBtn && browsePanel && folderListEl) {
       browseBtn.addEventListener("click", async function () {
-        const base = (input && input.value) ? input.value.trim() : DEFAULT_SOURCE_BASE;
+        const base = (input && input.value) ? input.value.trim() : "/mnt/source_loans";
         browsePanel.hidden = false;
         if (browseBaseEl) browseBaseEl.textContent = "Base: " + base;
         folderListEl.innerHTML = "";
@@ -481,7 +507,8 @@
       const label = PHASE_LABELS[name] || name;
       const done = name === "FAIL" ? lastPhase === "FAIL" : seen[name];
       const current = lastPhase === name;
-      const cls = current ? "stepper-step current" : (done ? "stepper-step done" : "stepper-step");
+      let cls = current ? "stepper-step current" : (done ? "stepper-step done" : "stepper-step");
+      if (current && name === "FAIL") cls += " stepper-fail";
       html += "<span class=\"" + cls + "\" title=\"" + escapeHtml(name) + "\">" + escapeHtml(label) + "</span>";
     });
     container.innerHTML = html;
@@ -743,6 +770,7 @@
   } catch (_) {}
 
   el("refresh-loans").addEventListener("click", refreshLoans);
+  updateProcessLoanButton();
   loadHealth();
   setInterval(loadHealth, 30000);
 })();

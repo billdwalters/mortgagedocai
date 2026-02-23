@@ -45,9 +45,12 @@ if str(_scripts_dir) not in sys.path:
 REPO_ROOT = _scripts_dir.parent
 SCRIPTS_DIR = _scripts_dir
 NAS_ANALYZE = Path("/mnt/nas_apps/nas_analyze")
-# Allowed root for source-folder browse (no listing outside this tree)
-SOURCE_LOANS_ROOT = Path("/mnt/source_loans")
-DEFAULT_SOURCE_BASE = "/mnt/source_loans/5-Borrowers TBD"
+# Source-of-truth root for original loan folders (env with fallback)
+SOURCE_LOANS_ROOT = Path(os.environ.get("MORTGAGEDOCAI_SOURCE_LOANS_ROOT", "/mnt/source_loans").strip())
+# Category folders under SOURCE_LOANS_ROOT to scan (avoids listing root, which can hit #recycle permission denied)
+_SOURCE_CATEGORIES_RAW = os.environ.get("MORTGAGEDOCAI_SOURCE_LOANS_CATEGORIES", "5-Borrowers TBD").strip()
+SOURCE_LOANS_CATEGORIES = [s.strip() for s in _SOURCE_CATEGORIES_RAW.split(",") if s.strip()]
+DEFAULT_SOURCE_BASE = str(SOURCE_LOANS_ROOT / "5-Borrowers TBD")
 
 STDOUT_TRUNCATE = 50_000
 STDERR_TRUNCATE = 50_000
@@ -154,6 +157,113 @@ def _is_loan_dir(name: str) -> bool:
     if not name or name.startswith("."):
         return False
     return name.replace("-", "").replace("_", "").isalnum() or name.isdigit()
+
+
+# Source-of-truth loan folder detection (under SOURCE_LOANS_ROOT, 2-level enumerate)
+_LOAN_FOLDER_RE = re.compile(r"\[Loan\s+(\d+)\]")
+_LOAN_ID_FALLBACK_RE = re.compile(r"\d{6,}")
+
+
+def _is_source_loan_folder(name: str) -> bool:
+    if not name or name.startswith("."):
+        return False
+    if "[Loan" in name and "]" in name:
+        return True
+    return "Loan" in name and any(c.isdigit() for c in name)
+
+
+def _extract_loan_id_from_folder_name(name: str) -> str | None:
+    m = _LOAN_FOLDER_RE.search(name)
+    if m:
+        return m.group(1)
+    m = _LOAN_ID_FALLBACK_RE.search(name)
+    if m:
+        return m.group(0)
+    return None
+
+
+def _run_id_to_utc_iso(run_id: str) -> str:
+    """Convert YYYY-MM-DDTHHMMSSZ to YYYY-MM-DDTHH:MM:SSZ."""
+    if len(run_id) != 20 or run_id[10] != "T" or run_id[-1] != "Z":
+        return run_id
+    return run_id[:11] + run_id[11:13] + ":" + run_id[13:15] + ":" + run_id[15:17] + run_id[17:]
+
+
+def _source_loan_last_modified_utc(path: Path) -> str:
+    """Max mtime of path and its immediate children (one level), as UTC ISO Z."""
+    try:
+        best = path.stat().st_mtime if path.exists() else 0.0
+        if path.is_dir():
+            for c in path.iterdir():
+                try:
+                    best = max(best, c.stat().st_mtime)
+                except OSError:
+                    pass
+        return datetime.fromtimestamp(best, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except OSError:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _last_processed_run_for_loan(tenant_id: str, loan_id: str) -> tuple[str | None, str | None]:
+    """Return (last_processed_run_id, last_processed_utc) or (None, None). Run dirs must match YYYY-MM-DDTHHMMSSZ."""
+    loans_dir = NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id
+    if not loans_dir.is_dir():
+        return (None, None)
+    run_ids = [
+        d.name for d in loans_dir.iterdir()
+        if d.is_dir() and _RUN_ID_PATTERN.match(d.name)
+    ]
+    if not run_ids:
+        return (None, None)
+    run_ids.sort(reverse=True)
+    run_id = run_ids[0]
+    return (run_id, _run_id_to_utc_iso(run_id))
+
+
+def _list_source_loan_items(tenant_id: str) -> list[dict[str, Any]]:
+    """Enumerate loan folders under SOURCE_LOANS_ROOT (2 levels), attach last_processed and needs_reprocess.
+    Only scans category folders named in SOURCE_LOANS_CATEGORIES to avoid listing root (e.g. #recycle permission denied)."""
+    root = SOURCE_LOANS_ROOT.resolve()
+    items: list[dict[str, Any]] = []
+    for cat_name in SOURCE_LOANS_CATEGORIES:
+        if not cat_name or cat_name.startswith("."):
+            continue
+        cat = root / cat_name
+        try:
+            if not cat.is_dir():
+                continue
+            sub_dirs = sorted(cat.iterdir())
+        except OSError:
+            continue  # skip inaccessible dirs
+        for d in sub_dirs:
+            try:
+                if not d.is_dir() or not _is_source_loan_folder(d.name):
+                    continue
+                loan_id = _extract_loan_id_from_folder_name(d.name)
+                if not loan_id:
+                    continue
+                source_path = str(d.resolve())
+                source_last_modified_utc = _source_loan_last_modified_utc(d)
+                last_processed_run_id, last_processed_utc = _last_processed_run_for_loan(tenant_id, loan_id)
+                needs_reprocess = (
+                    last_processed_run_id is None
+                    or (source_last_modified_utc > last_processed_utc)
+                )
+                items.append({
+                    "loan_id": loan_id,
+                    "folder_name": d.name,
+                    "source_path": source_path,
+                    "source_last_modified_utc": source_last_modified_utc,
+                    "last_processed_run_id": last_processed_run_id,
+                    "last_processed_utc": last_processed_utc,
+                    "needs_reprocess": needs_reprocess,
+                })
+            except OSError:
+                continue  # skip inaccessible subdirs
+    items.sort(key=lambda x: x["loan_id"])
+    items.sort(key=lambda x: x["source_last_modified_utc"] or "", reverse=True)
+    items.sort(key=lambda x: x["needs_reprocess"], reverse=True)
+    return items
 
 
 PROFILE_FILE_NAMES = (
@@ -315,26 +425,51 @@ def _run_job_worker(job_id: str, tenant_id: str, loan_id: str, request: dict[str
         else:
             cmd += ["--no-run-llm"]
 
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             cwd=str(REPO_ROOT),
             env=env,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
-            check=False,
+            bufsize=1,
         )
-        returncode = result.returncode
-        stdout = _truncate(result.stdout or "", STDOUT_TRUNCATE)
-        stderr = _truncate(result.stderr or "", STDERR_TRUNCATE)
-    except subprocess.TimeoutExpired:
-        returncode = -1
-        stdout = ""
-        stderr = _truncate(f"Job timed out after {timeout}s", STDERR_TRUNCATE)
+
+        def read_stdout():
+            for line in proc.stdout or []:
+                line = line if line.endswith("\n") else line + "\n"
+                stdout_parts.append(line)
+                with JOBS_LOCK:
+                    if job_id in JOBS:
+                        current = JOBS[job_id].get("stdout") or ""
+                        JOBS[job_id]["stdout"] = _truncate(current + line, STDOUT_TRUNCATE)
+
+        def read_stderr():
+            for line in proc.stderr or []:
+                stderr_parts.append(line)
+
+        t_out = threading.Thread(target=read_stdout, daemon=True)
+        t_err = threading.Thread(target=read_stderr, daemon=True)
+        t_out.start()
+        t_err.start()
+        try:
+            returncode = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            returncode = -1
+            stderr_parts.append(f"Job timed out after {timeout}s\n")
+        t_out.join(timeout=2.0)
+        t_err.join(timeout=2.0)
+        stdout = _truncate("".join(stdout_parts), STDOUT_TRUNCATE)
+        stderr = _truncate("".join(stderr_parts), STDERR_TRUNCATE)
     except Exception as e:
         returncode = -1
-        stdout = ""
+        stdout = "".join(stdout_parts)
         stderr = _truncate(str(e), STDERR_TRUNCATE)
 
     resolved_run_id = request.get("run_id") or _parse_run_id_from_stdout(stdout)
@@ -493,6 +628,34 @@ def list_loans(tenant_id: str) -> dict[str, list[str]]:
         if d.is_dir() and _is_loan_dir(d.name)
     ]
     return {"loan_ids": sorted(loan_ids)}
+
+
+def _ensure_source_loans_root_mounted() -> None:
+    if not SOURCE_LOANS_ROOT.resolve().is_dir():
+        raise HTTPException(status_code=500, detail="Source loans root not mounted")
+
+
+@app.get("/tenants/{tenant_id}/source_loans")
+def list_source_loans(tenant_id: str) -> dict[str, Any]:
+    """List source-of-truth loan folders under SOURCE_LOANS_ROOT with last_processed and needs_reprocess."""
+    _ensure_source_loans_root_mounted()
+    items = _list_source_loan_items(tenant_id)
+    return {"source_root": str(SOURCE_LOANS_ROOT.resolve()), "items": items}
+
+
+@app.get("/tenants/{tenant_id}/source_loans/{loan_id}")
+def get_source_loan(tenant_id: str, loan_id: str) -> dict[str, Any]:
+    """Get source path and metadata for a single loan by loan_id."""
+    _ensure_source_loans_root_mounted()
+    items = _list_source_loan_items(tenant_id)
+    for it in items:
+        if it["loan_id"] == loan_id:
+            return {
+                "loan_id": it["loan_id"],
+                "source_path": it["source_path"],
+                "source_last_modified_utc": it["source_last_modified_utc"],
+            }
+    raise HTTPException(status_code=404, detail="Source loan not found")
 
 
 @app.post("/tenants/{tenant_id}/loans/{loan_id}/runs", status_code=202)

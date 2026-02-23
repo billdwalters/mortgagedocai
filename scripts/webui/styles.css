@@ -222,6 +222,29 @@ body {
   font-size: 0.75rem;
   margin-top: 0.2rem;
 }
+.loan-item .loan-folder-name,
+.loan-item .loan-meta {
+  display: block;
+  font-size: 0.75rem;
+  margin-top: 0.2rem;
+  color: var(--muted);
+}
+.loan-item .loan-badge {
+  display: inline-block;
+  margin-top: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.loan-item .loan-badge.needs-processing {
+  background: var(--warn);
+  color: var(--bg);
+}
+.loan-item .loan-badge.up-to-date {
+  background: var(--success);
+  color: var(--bg);
+}
 .loan-item.error {
   color: var(--error);
 }
@@ -334,7 +357,7 @@ body {
   font-size: 0.8rem;
 }
 
-/* Stepper */
+/* Stepper — pending = gray, done = green, current = accent */
 .stepper {
   display: flex;
   flex-wrap: wrap;
@@ -342,19 +365,30 @@ body {
   margin: 0.75rem 0;
 }
 .stepper-step {
-  padding: 0.25rem 0.5rem;
+  padding: 0.35rem 0.6rem;
   font-size: 0.75rem;
-  border-radius: 4px;
-  background: rgba(255,255,255,0.05);
+  font-weight: 500;
+  border-radius: 6px;
+  background: var(--surface);
   color: var(--muted);
+  border: 1px solid rgba(255,255,255,0.08);
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
 }
 .stepper-step.done {
-  background: rgba(34, 197, 94, 0.2);
+  background: rgba(34, 197, 94, 0.25);
   color: var(--success);
+  border-color: rgba(34, 197, 94, 0.4);
 }
 .stepper-step.current {
   background: var(--accent);
   color: white;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.stepper-step.current.stepper-fail {
+  background: var(--error);
+  border-color: var(--error);
+  box-shadow: 0 0 0 1px var(--error);
 }
 
 .logs-details {

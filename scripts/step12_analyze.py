@@ -2398,7 +2398,8 @@ def main(argv=None) -> None:
     global _DEBUG
     args = parse_args(argv)
     _DEBUG = args.debug
-    preflight_mount_contract()
+    # Query-only runs (e.g. API "Ask a question") read from nas_analyze only; skip SOURCE_MOUNT check to avoid autofs not materialized
+    preflight_mount_contract(skip_source_check=bool(args.queries))
     ctx = build_run_context(args.tenant_id, args.loan_id, run_id=args.run_id)
 
     queries = args.queries or ["Summarize the key underwriting conditions."]
