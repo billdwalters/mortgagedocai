@@ -81,14 +81,15 @@ def test_per_loan_lock_second_waits():
     (nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs").mkdir(parents=True)
     run_times = []
 
-    def slow_run(*a, **kw):
-        run_times.append(time.time())
-        time.sleep(1.5)
-        return type("R", (), {"returncode": 0, "stdout": "run_id = slow-1", "stderr": ""})()
+    class SlowFakeRunner:
+        def run(self, req, tenant_id, loan_id, env, timeout):
+            run_times.append(time.time())
+            time.sleep(1.5)
+            return 0, f"run_id = {req.get('run_id', 'slow-1')}", ""
 
     req1 = {"run_id": "run-a", "skip_intake": True}
     req2 = {"run_id": "run-b", "skip_intake": True}
-    with patch.object(job_runner, "NAS_ANALYZE", nas), patch("subprocess.run", side_effect=slow_run):
+    with patch.object(job_runner, "NAS_ANALYZE", nas):
         job_runner.JOBS.clear()
         job_runner.JOB_KEY_INDEX.clear()
         r1 = job_runner.enqueue_job("t1", "L1", req1)
@@ -96,11 +97,10 @@ def test_per_loan_lock_second_waits():
         assert r1["job_id"] != r2["job_id"]
         from job_worker import run_one_cycle
         from loan_service.adapters_disk import DiskJobStore, LoanLockImpl
-        from loan_service.adapters_subprocess import SubprocessRunner
         get_base = lambda: nas
         store = DiskJobStore(get_base)
         loan_lock = LoanLockImpl(get_base)
-        runner = SubprocessRunner()
+        runner = SlowFakeRunner()
         for _ in range(30):
             run_one_cycle(get_base, store, loan_lock, runner)
             job_runner.load_jobs_from_disk()
