@@ -1,7 +1,7 @@
 """Protocol interfaces for job store, key index, loan lock, and pipeline runner."""
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .domain import JobRecord, JobRequest
 
@@ -52,6 +52,7 @@ class PipelineRunner(Protocol):
         loan_id: str,
         env: dict[str, str],
         timeout: int,
+        on_stdout_line: Callable[[str], None] | None = None,
     ) -> tuple[int, str, str]:
         """Run run_loan_job.py. Returns (returncode, stdout, stderr)."""
         ...
