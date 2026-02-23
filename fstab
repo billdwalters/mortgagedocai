@@ -1,0 +1,19 @@
+# /etc/fstab: static file system information.
+#
+# Use 'blkid' to print the universally unique identifier for a
+# device; this may be used with UUID= as a more robust way to name devices
+# that works even if disks are added and removed. See fstab(5).
+#
+# <file system> <mount point>   <type>  <options>       <dump>  <pass>
+# / was on /dev/ubuntu-vg-1/ubuntu-lv during curtin installation
+/dev/disk/by-id/dm-uuid-LVM-fjMflxEknE0wmvCKgvwh3RbZtuuJfZ0ZZbb3Zoi2XTawjt5DrSfK4Y7rMaecI5gU / ext4 defaults 0 1
+# /boot was on /dev/sdb2 during curtin installation
+/dev/disk/by-uuid/fd4c62d8-daed-425d-919e-82df3c6d906e /boot ext4 defaults 0 1
+/swap.img	none	swap	sw	0	0
+UUID=9c62bf46-08c4-4d31-aab3-ae56e1f820e1  /mnt/llm_models  ext4  defaults,nofail  0  2
+
+//10.10.10.65/mortgage_intake   /mnt/nas_apps/nas_ingest   cifs  credentials=/etc/smb_ai_svc,vers=3.1.1,noperm,noserverino,nofail  0  0
+//10.10.10.65/mortgage_chunk    /mnt/nas_apps/nas_chunk    cifs  credentials=/etc/smb_ai_svc,vers=3.1.1,noperm,noserverino,nofail  0  0
+//10.10.10.65/mortgage_exports  /mnt/nas_apps/nas_analyze  cifs  credentials=/etc/smb_ai_svc,vers=3.1.1,noperm,noserverino,nofail  0  0
+# //10.10.10.36/Peak\040Capital  /mnt/source_loans  cifs  ro,credentials=/root/.smbcredentials-peakcapital,vers=3.1.1,iocharset=utf8,nofail,_netdev  0  0
+//10.10.10.36/Peak\040Capital  /mnt/source_loans  cifs  ro,credentials=/root/.smbcredentials-peakcapital,vers=3.1.1,iocharset=utf8,uid=0,gid=0,dir_mode=0555,file_mode=0444,nosuid,nodev,noexec,noperm,noserverino,_netdev,x-systemd.automount,nofail,x-systemd.idle-timeout=60,x-systemd.device-timeout=10,x-systemd.mount-timeout=10  0  0
