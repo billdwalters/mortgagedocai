@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -106,7 +107,7 @@ def _run_query_job(
 
 
 class SubprocessRunner:
-    """Runs scripts/run_loan_job.py with same args and env as job_runner."""
+    """Runs scripts/run_loan_job.py; streams stdout so callers see PHASE lines in real time."""
 
     def run(
         self,
@@ -115,8 +116,10 @@ class SubprocessRunner:
         loan_id: str,
         env: dict[str, str],
         timeout: int,
+        on_stdout_line: Any = None,  # Optional[Callable[[str], None]]
     ) -> tuple[int, str, str]:
         if "question" in req and "profile" in req:
+            # Query jobs are fast; streaming not needed.
             return _run_query_job(req, tenant_id, loan_id, env, timeout)
         run_id = req.get("run_id")
         cmd = [
@@ -152,15 +155,52 @@ class SubprocessRunner:
             cmd += ["--top-k", str(int(req["top_k"]))]
         if req.get("max_per_file") is not None:
             cmd += ["--max-per-file", str(int(req["max_per_file"]))]
-        result = subprocess.run(
-            cmd,
-            cwd=str(REPO_ROOT),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-        stdout = _truncate(result.stdout or "", STDOUT_TRUNCATE)
-        stderr = _truncate(result.stderr or "", STDERR_TRUNCATE)
-        return result.returncode, stdout, stderr
+
+        stdout_parts: list[str] = []
+        stderr_parts: list[str] = []
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(REPO_ROOT),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+
+            def _read_stdout() -> None:
+                for line in proc.stdout or []:
+                    line = line if line.endswith("\n") else line + "\n"
+                    stdout_parts.append(line)
+                    if on_stdout_line is not None:
+                        try:
+                            on_stdout_line(line)
+                        except Exception:
+                            pass
+
+            def _read_stderr() -> None:
+                for line in proc.stderr or []:
+                    stderr_parts.append(line)
+
+            t_out = threading.Thread(target=_read_stdout, daemon=True)
+            t_err = threading.Thread(target=_read_stderr, daemon=True)
+            t_out.start()
+            t_err.start()
+            try:
+                returncode = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                returncode = -1
+                stderr_parts.append(f"Job timed out after {timeout}s\n")
+            t_out.join(timeout=2.0)
+            t_err.join(timeout=2.0)
+        except Exception as e:
+            returncode = -1
+            stderr_parts.append(str(e) + "\n")
+
+        stdout = _truncate("".join(stdout_parts), STDOUT_TRUNCATE)
+        stderr = _truncate("".join(stderr_parts), STDERR_TRUNCATE)
+        return returncode, stdout, stderr
