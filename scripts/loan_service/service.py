@@ -147,9 +147,18 @@ class JobService:
             raise
         timeout = request.get("timeout", JOB_TIMEOUT_DEFAULT)
         env = get_job_env(request)
+
+        def _on_line(line: str) -> None:
+            with self._lock:
+                if job_id in self._jobs:
+                    current = self._jobs[job_id].get("stdout") or ""
+                    self._jobs[job_id]["stdout"] = _truncate(
+                        current + line, STDOUT_TRUNCATE
+                    )
+
         try:
             returncode, stdout, stderr = self._runner.run(
-                request, tenant_id, loan_id, env, timeout
+                request, tenant_id, loan_id, env, timeout, on_stdout_line=_on_line
             )
         except subprocess.TimeoutExpired:
             with self._lock:
