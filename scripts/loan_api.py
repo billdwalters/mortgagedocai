@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 import threading
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +59,9 @@ ERROR_TRUNCATE = 4_000
 JOB_TIMEOUT_DEFAULT = 3600
 
 _RUN_ID_LINE_RE = re.compile(r"run_id\s*=\s*(\S+)")
+
+# Ollama URL for LLM model list (server-side only; used by GET /ollama/models)
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").strip()
 
 # API security (env at load time)
 _API_KEY = os.environ.get("MORTGAGEDOCAI_API_KEY", "").strip()
@@ -603,6 +607,20 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/ollama/models")
+def ollama_models() -> dict[str, Any]:
+    """Return list of model names from Ollama (GET /api/tags). Enables UI dropdown of installed LLMs."""
+    url = OLLAMA_URL.rstrip("/") + "/api/tags"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        models = [m.get("name", m.get("model", "")) for m in data.get("models", []) if m.get("name") or m.get("model")]
+        return {"models": models, "ollama_url": OLLAMA_URL}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Ollama unreachable: {e!s}")
+
+
 @app.get("/browse/source")
 def browse_source(base: str = DEFAULT_SOURCE_BASE) -> dict[str, Any]:
     """List direct subdirectories under an allowed source path. base must be under SOURCE_LOANS_ROOT."""
@@ -894,7 +912,9 @@ def query_run(tenant_id: str, loan_id: str, run_id: str, body: QueryBody) -> dic
         "--no-auto-retrieve",
     ]
     if body.llm_model and body.profile != "uw_decision":
-        step12_cmd += ["--llm-model", body.llm_model]
+        step12_cmd += ["--llm-model", body.llm_model"]
+    # Lower evidence + tokens for API "Ask a question" so Ollama can complete on weak/sandbox servers
+    step12_cmd += ["--ollama-timeout", "600", "--evidence-max-chars", "6000", "--llm-max-tokens", "400"]
     result12 = subprocess.run(step12_cmd, cwd=str(REPO_ROOT), env=env, capture_output=True, text=True)
     if result12.returncode != 0:
         stderr_tail = (result12.stderr or result12.stdout or "")[-2000:]

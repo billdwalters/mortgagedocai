@@ -626,6 +626,32 @@
     });
   })();
 
+  // ——— Ollama models dropdown (populated from server) ———
+  async function loadOllamaModels() {
+    const selectEl = el("chat-llm-model");
+    if (!selectEl) return;
+    try {
+      const data = await apiJson("/ollama/models");
+      const models = (data && Array.isArray(data.models)) ? data.models : [];
+      selectEl.innerHTML = "";
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "(use server default)";
+      selectEl.appendChild(empty);
+      models.forEach(function (name) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        selectEl.appendChild(opt);
+      });
+      if (models.length > 0 && !selectEl.value) {
+        selectEl.selectedIndex = 1;
+      }
+    } catch (e) {
+      selectEl.innerHTML = "<option value=\"\">Ollama unavailable</option>";
+    }
+  }
+
   // ——— Chat ———
   (function initChat() {
     const messagesEl = el("chat-messages");
@@ -662,13 +688,17 @@
         appendMessage("assistant", "Select a loan first.");
         return;
       }
-      const runId = await getLatestSuccessRunId();
+      // Use the run shown in the UI (from loan list or last job) so we don't hit a stale cached run_id
+      let runId = selectedRunId;
+      if (!runId) runId = await getLatestSuccessRunId();
       if (!runId) {
         appendMessage("assistant", "No successful run for this loan. Process the loan first.");
         return;
       }
       appendMessage("user", question);
       if (inputEl) inputEl.value = "";
+      const processingEl = el("chat-processing");
+      if (processingEl) processingEl.hidden = false;
       const profile = (profileSelect && profileSelect.value) ? profileSelect.value : "default";
       const llmModel = (llmInput && llmInput.value) ? llmInput.value.trim() : null;
       const tenant = getTenantId();
@@ -715,6 +745,8 @@
         appendMessage("assistant", answer || "(No answer returned)");
       } catch (e) {
         appendMessage("assistant", "Error: " + (e.message || e));
+      } finally {
+        if (processingEl) processingEl.hidden = true;
       }
     }
 
@@ -772,5 +804,6 @@
   el("refresh-loans").addEventListener("click", refreshLoans);
   updateProcessLoanButton();
   loadHealth();
+  loadOllamaModels();
   setInterval(loadHealth, 30000);
 })();

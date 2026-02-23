@@ -110,7 +110,7 @@ def _ollama_generate(
     prompt: str,
     temperature: float = 0.0,
     max_tokens: int = 800,
-    timeout: int = 300,
+    timeout: int = 600,
 ) -> str:
     url = ollama_url.rstrip("/") + "/api/generate"
     payload = {
@@ -2385,8 +2385,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--llm-temperature", type=float, default=0.0)
     ap.add_argument("--llm-max-tokens", type=int, default=800)
     ap.add_argument("--evidence-max-chars", type=int, default=12000)
-    ap.add_argument("--ollama-timeout", type=int, default=300,
-                    help="Timeout in seconds for Ollama HTTP request (default: 300)")
+    ap.add_argument("--ollama-timeout", type=int, default=600,
+                    help="Timeout in seconds for Ollama HTTP request (default: 600)")
     ap.add_argument("--debug", action="store_true", default=False,
                     help="Enable diagnostic debug output")
     ap.add_argument("--save-llm-raw", action="store_true", default=False,

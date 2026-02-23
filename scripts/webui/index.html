@@ -108,12 +108,16 @@
           </label>
           <details class="chat-advanced">
             <summary>Advanced</summary>
-            <label>llm_model <input id="chat-llm-model" type="text" placeholder="e.g. mistral"></label>
+            <label>LLM model <select id="chat-llm-model"><option value="">Loading…</option></select></label>
           </details>
         </div>
         <div class="chat-send-row">
           <input id="chat-input" type="text" placeholder="Type your question…">
           <button type="button" id="chat-send">Send</button>
+        </div>
+        <div id="chat-processing" class="chat-processing" hidden aria-live="polite">
+          <span class="chat-processing-spinner"></span>
+          <span>Processing…</span>
         </div>
       </section>
     </main>

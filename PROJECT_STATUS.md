@@ -1,6 +1,6 @@
 # MortgageDocAI — Project Status
 
-**Last Updated:** 2026-02-21
+**Last Updated:** 2026-02-23
 
 ## Current phase & AI context
 
@@ -113,7 +113,8 @@ Pipeline steps:
 - Retrieval packs written under `retrieve/<pipeline_run_id>/retrieval_pack.json`
 - Step12 auto-triggers Step13 if retrieval pack is missing
 - Re-runs for same `run_id` overwrite cleanly
-- **Loan API (FastAPI):** health, list tenants/loans/runs, sync query, pipeline jobs, query jobs, artifacts index and artifact downloads; optional API key and tenant allowlist (see Loan API section below)
+- **Loan API (FastAPI):** health, list tenants/loans/runs, **source-of-truth source_loans** (list + by loan_id), sync query, pipeline jobs, query jobs, artifacts index and artifact downloads; optional API key and tenant allowlist (see Loan API section below)
+- **Web UI (/ui):** Refresh Loans from source-of-truth mount; loan list with Needs Processing / Up to date badges; Process Loan uses selected loan’s source_path; progress stepper shows live phase colors (streamed job stdout)
 
 ---
 
@@ -1073,7 +1074,10 @@ Minimal local-only HTTP service for loan analysis: list tenants/loans/runs, sync
 |--------|------|--------------|
 | GET | `/` | Service info and links |
 | GET | `/health` | `{"status":"ok"}` |
-| GET | `/tenants/{tenant_id}/loans` | List loan IDs |
+| GET | `/browse/source` | List subfolders under allowed source base (query `?base=`) |
+| GET | `/tenants/{tenant_id}/loans` | List loan IDs (from nas_analyze) |
+| GET | `/tenants/{tenant_id}/source_loans` | **Source-of-truth:** list loan folders with last_processed, needs_reprocess |
+| GET | `/tenants/{tenant_id}/source_loans/{loan_id}` | **Source-of-truth:** get source_path + metadata for one loan |
 | POST | `/tenants/{tenant_id}/loans/{loan_id}/runs` | Start run (fire-and-forget) |
 | GET | `/tenants/{tenant_id}/loans/{loan_id}/runs` | List run IDs |
 | GET | `/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}` | Run status (job_manifest.json) |
@@ -1095,6 +1099,8 @@ Minimal local-only HTTP service for loan analysis: list tenants/loans/runs, sync
 - **Pipeline jobs** (POST `.../jobs`): Body includes `run_id`, `skip_intake`, `skip_process`, `offline_embeddings`, `top_k`, `max_per_file`, `max_dropped_chunks`, `expect_rp_hash_stable`, `smoke_debug`, `llm_model`, `timeout`. A daemon thread runs `run_loan_job.py` with matching CLI flags. Idempotency: same (tenant_id, loan_id, request body) returns same job_id when status is PENDING/RUNNING/SUCCESS.
 
 **Progress phases (2026-02-21):** Job `stdout` includes deterministic phase markers so a desktop client can show progress. Format: one line per transition, `PHASE:<NAME> <UTC_ISO_Z>`. Phase names (in order): `INTAKE`, `PROCESS`, `STEP13_GENERAL`, `STEP13_INCOME`, `STEP12_INCOME_ANALYSIS`, `STEP12_UW_DECISION`, `DONE` (success), `FAIL` (on failure). Emitted by `run_loan_job.py` during the pipeline; workers append `PHASE:FAIL` when the job fails from timeout or exception (no subprocess stdout). Manifest short-circuit emits `PHASE:DONE` only. No new API keys; progress is observable via existing `stdout` (and `stderr`/`error`/`result`).
+
+**Streaming job stdout (2026-02-23):** Pipeline jobs now stream subprocess stdout into `JOBS[job_id]["stdout"]` as lines are produced, so the Web UI progress stepper can show live phase colors (pending / done / current / fail) during the run instead of only after completion.
 - **Query jobs** (POST `.../runs/{run_id}/query_jobs`): Body matches sync query: `question`, `profile`, `llm_model`, `offline_embeddings`, `top_k`, `max_per_file`. Profile must be one of: `default`, `uw_conditions`, `income_analysis`, `uw_decision`. Runner executes Step13 then Step12 (one overall timeout split between steps). Success = Step12 returncode 0. No manifest short-circuit; result has `outputs_base` and `status` only. Fetch answer via artifact endpoint: `.../artifacts/{profile}/answer.json`.
 
 ### run_loan_job.py execution options (used by API/worker)
@@ -1120,6 +1126,34 @@ Applied via middleware in `loan_api.py` (no new dependencies; uses Starlette).
 ### Alternative: disk-backed job service (loan_service)
 
 If the app is wired to use `loan_service` (JobService, DiskJobStore, SubprocessRunner) instead of the in-memory loan_api.py implementation, the same endpoint paths and response shapes apply. Query jobs and pipeline jobs are executed by `adapters_subprocess.SubprocessRunner` (query jobs: Step13 + Step12; pipeline jobs: `run_loan_job.py`). Manifest short-circuit and tenant/request idempotency are handled in `service.py`.
+
+---
+
+## Source-of-truth loan list and Web UI (2026-02-23)
+
+The Web UI and API now use a **source-of-truth** view of loan folders on the read-only NAS mount, with **needs_reprocess** derived from source mtime vs last run.
+
+### Config (env)
+
+- **MORTGAGEDOCAI_SOURCE_LOANS_ROOT** — Root directory for original loan folders (default: `/mnt/source_loans`). If missing, new source_loans endpoints return 500 "Source loans root not mounted".
+- **MORTGAGEDOCAI_SOURCE_LOANS_CATEGORIES** — Comma-separated subfolder names under the root to scan (default: `5-Borrowers TBD`). Avoids listing the root so Synology `#recycle` (permission denied) is never touched.
+
+### API (additive)
+
+- **GET /tenants/{tenant_id}/source_loans** — Enumerates loan folders under SOURCE_LOANS_ROOT (2 levels: category → loan folder). Loan folders detected by name pattern `[Loan 12345]` or Loan + digits; loan_id extracted by regex. Response: `source_root`, `items[]` with `loan_id`, `folder_name`, `source_path`, `source_last_modified_utc`, `last_processed_run_id`, `last_processed_utc`, `needs_reprocess`. Sorted: needs_reprocess desc, source_last_modified_utc desc, loan_id asc.
+- **GET /tenants/{tenant_id}/source_loans/{loan_id}** — Single loan: `loan_id`, `source_path`, `source_last_modified_utc`. 404 "Source loan not found" if not in list.
+
+Last processed comes from `nas_analyze/tenants/{tenant}/loans/{loan_id}/` run dirs matching `YYYY-MM-DDTHHMMSSZ`; newest run_id used. `needs_reprocess` = true when no run or `source_last_modified_utc` > `last_processed_utc`.
+
+### Web UI (scripts/webui)
+
+- **Refresh Loans** calls GET `/tenants/{tenant}/source_loans` (no longer `/tenants/{tenant}/loans`). List shows loan ID, folder name, source last modified, last processed (or "Never"), and badge **Needs Processing** or **Up to date**.
+- Selecting a loan sets **source_path** from the item and shows last processed; **Process Loan** is disabled until a loan is selected.
+- **Progress stepper:** Pending (gray), Done (green), Current (accent), Failed (red). Job **stdout** is streamed so PHASE lines appear during the run and the stepper updates live.
+
+### Query path and SOURCE_MOUNT
+
+- **preflight_mount_contract(skip_source_check=True)** — When step12 is run with `--query` (e.g. API "Ask a question"), the SOURCE_MOUNT check is skipped so autofs "backing mount not materialized" does not block query-only runs (which read only from nas_analyze). lib.py and step12_analyze.py updated accordingly.
 
 ---
 
