@@ -2,8 +2,8 @@
 """
 MortgageDocAI — minimal LOCAL-ONLY FastAPI service wrapping run_loan_job.py and step12/step13.
 
-Background jobs: in-memory registry (JOBS), daemon thread runs run_loan_job.py.
-No cloud APIs. No Redis/DB/Celery. Jobs lost on restart.
+Background jobs: disk-backed JobService (DiskJobStore), daemon threads run run_loan_job.py.
+No cloud APIs. No Redis/DB/Celery. Jobs persist across restarts.
 
 Usage:
   python3 scripts/loan_api.py --host 127.0.0.1 --port 8000
@@ -23,7 +23,6 @@ import subprocess
 import sys
 import threading
 import urllib.request
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List
@@ -109,8 +108,7 @@ _RUN_ID_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{6}Z$")
 
 
 def _utc_run_id() -> str:
-    import datetime
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
 
 
 def _is_loan_dir(name: str) -> bool:
