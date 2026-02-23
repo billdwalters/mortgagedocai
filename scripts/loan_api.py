@@ -71,58 +71,28 @@ _ALLOWED_TENANTS: set[str] = (
     if _ALLOWED_TENANTS_RAW else set()
 )
 
-# In-memory job registry (minimal; jobs lost on restart)
-JOBS: dict[str, dict[str, Any]] = {}
-JOBS_LOCK = threading.Lock()
-# job_key -> job_id for idempotent POST /jobs
-JOB_KEY_INDEX: dict[str, str] = {}
-
-
 def _get_base_path() -> Path:
     return NAS_ANALYZE
 
 
-def _compute_job_key(tenant_id: str, loan_id: str, request: dict[str, Any]) -> str:
-    """Stable sha256 of tenant_id + loan_id + request for idempotency."""
-    payload = {"tenant_id": tenant_id, "loan_id": loan_id, "request": request}
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(raw).hexdigest()
+# ---------------------------------------------------------------------------
+# Disk-backed job service — single source of truth (replaces JOBS/JOBS_LOCK)
+# ---------------------------------------------------------------------------
+from loan_service.adapters_disk import DiskJobStore, JobKeyIndexImpl, LoanLockImpl
+from loan_service.adapters_subprocess import SubprocessRunner
+from loan_service.service import JobService
 
-
-def _utc_now_z() -> str:
-    import datetime
-    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-_RUN_ID_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{6}Z$")
-
-
-def _utc_run_id() -> str:
-    import datetime
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
-
-
-def _truncate(s: str, max_len: int) -> str:
-    if not s or len(s) <= max_len:
-        return s or ""
-    return s[:max_len] + "\n... (truncated)"
-
-
-def _phase(job_id: str, name: str) -> None:
-    """Append one phase marker line to JOBS[job_id][\"stdout\"]. Caller must hold JOBS_LOCK."""
-    if job_id not in JOBS:
-        return
-    current = JOBS[job_id].get("stdout") or ""
-    line = f"PHASE:{name} {_utc_now_z()}\n"
-    JOBS[job_id]["stdout"] = _truncate(current + line, STDOUT_TRUNCATE)
-
-
-def _parse_run_id_from_stdout(stdout: str) -> str | None:
-    for line in stdout.splitlines():
-        m = _RUN_ID_LINE_RE.search(line)
-        if m:
-            return m.group(1).strip()
-    return None
+_store = DiskJobStore(_get_base_path)
+_key_index = JobKeyIndexImpl()
+_loan_lock = LoanLockImpl(_get_base_path)
+_runner = SubprocessRunner()
+_service = JobService(
+    store=_store,
+    key_index=_key_index,
+    loan_lock=_loan_lock,
+    runner=_runner,
+    get_base_path=_get_base_path,
+)
 
 
 def _quiet_env() -> dict[str, str]:
@@ -135,26 +105,12 @@ def _quiet_env() -> dict[str, str]:
     return env
 
 
-def _job_env_from_request(request: dict[str, Any]) -> dict[str, str]:
-    env = _quiet_env()
-    env["SMOKE_DEBUG"] = "1" if request.get("smoke_debug") else "0"
-    if "expect_rp_hash_stable" in request:
-        env["EXPECT_RP_HASH_STABLE"] = "1" if request.get("expect_rp_hash_stable") else "0"
-    if request.get("max_dropped_chunks") is not None:
-        env["MAX_DROPPED_CHUNKS"] = str(request["max_dropped_chunks"])
-    return env
+_RUN_ID_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{6}Z$")
 
 
-def _load_manifest_if_present(tenant_id: str, loan_id: str, run_id: str) -> dict[str, Any] | None:
-    base = _get_base_path()
-    mp = base / "tenants" / tenant_id / "loans" / loan_id / run_id / "job_manifest.json"
-    if not mp.exists():
-        return None
-    try:
-        with mp.open() as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return None
+def _utc_run_id() -> str:
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
 
 
 def _is_loan_dir(name: str) -> bool:
@@ -386,128 +342,6 @@ def _build_artifacts_index(tenant_id: str, loan_id: str, run_id: str) -> dict[st
     }
 
 
-def _run_job_worker(job_id: str, tenant_id: str, loan_id: str, request: dict[str, Any]) -> None:
-    """Daemon thread target: set RUNNING, run run_loan_job.py, then update job with result or error."""
-    with JOBS_LOCK:
-        if job_id not in JOBS:
-            return
-        JOBS[job_id]["status"] = "RUNNING"
-        JOBS[job_id]["started_at_utc"] = _utc_now_z()
-
-    timeout = int(request.get("timeout") or JOB_TIMEOUT_DEFAULT)
-    env = _job_env_from_request(request)
-
-    cmd = [
-        sys.executable,
-        str(SCRIPTS_DIR / "run_loan_job.py"),
-        "--tenant-id", tenant_id,
-        "--loan-id", loan_id,
-    ]
-    if request.get("run_id"):
-        cmd += ["--run-id", str(request["run_id"])]
-    if request.get("skip_intake"):
-        cmd += ["--skip-intake"]
-    if request.get("skip_process"):
-        cmd += ["--skip-process"]
-    if request.get("source_path"):
-        cmd += ["--source-path", str(request["source_path"])]
-    if request.get("smoke_debug"):
-        cmd += ["--debug"]
-    if request.get("expect_rp_hash_stable"):
-        cmd += ["--expect-rp-hash-stable"]
-    if request.get("max_dropped_chunks") is not None:
-        cmd += ["--max-dropped-chunks", str(int(request["max_dropped_chunks"]))]
-    if request.get("offline_embeddings"):
-        cmd += ["--offline-embeddings"]
-    if request.get("top_k") is not None:
-        cmd += ["--top-k", str(int(request["top_k"]))]
-    if request.get("max_per_file") is not None:
-        cmd += ["--max-per-file", str(int(request["max_per_file"]))]
-    if "run_llm" in request:
-        if request.get("run_llm"):
-            cmd += ["--run-llm"]
-        else:
-            cmd += ["--no-run-llm"]
-
-    stdout_parts: list[str] = []
-    stderr_parts: list[str] = []
-
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(REPO_ROOT),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-        )
-
-        def read_stdout():
-            for line in proc.stdout or []:
-                line = line if line.endswith("\n") else line + "\n"
-                stdout_parts.append(line)
-                with JOBS_LOCK:
-                    if job_id in JOBS:
-                        current = JOBS[job_id].get("stdout") or ""
-                        JOBS[job_id]["stdout"] = _truncate(current + line, STDOUT_TRUNCATE)
-
-        def read_stderr():
-            for line in proc.stderr or []:
-                stderr_parts.append(line)
-
-        t_out = threading.Thread(target=read_stdout, daemon=True)
-        t_err = threading.Thread(target=read_stderr, daemon=True)
-        t_out.start()
-        t_err.start()
-        try:
-            returncode = proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-            returncode = -1
-            stderr_parts.append(f"Job timed out after {timeout}s\n")
-        t_out.join(timeout=2.0)
-        t_err.join(timeout=2.0)
-        stdout = _truncate("".join(stdout_parts), STDOUT_TRUNCATE)
-        stderr = _truncate("".join(stderr_parts), STDERR_TRUNCATE)
-    except Exception as e:
-        returncode = -1
-        stdout = "".join(stdout_parts)
-        stderr = _truncate(str(e), STDERR_TRUNCATE)
-
-    resolved_run_id = request.get("run_id") or _parse_run_id_from_stdout(stdout)
-    result_summary: dict[str, Any] = {}
-    if resolved_run_id:
-        manifest = _load_manifest_if_present(tenant_id, loan_id, resolved_run_id)
-        if manifest:
-            base = _get_base_path()
-            mp = base / "tenants" / tenant_id / "loans" / loan_id / resolved_run_id / "job_manifest.json"
-            result_summary["manifest_path"] = str(mp)
-            result_summary["status"] = manifest.get("status")
-            result_summary["rp_sha256"] = manifest.get("retrieval_pack_sha256")
-            result_summary["outputs_base"] = str(mp.parent) if mp.parent else None
-
-    with JOBS_LOCK:
-        if job_id not in JOBS:
-            return
-        JOBS[job_id]["finished_at_utc"] = _utc_now_z()
-        JOBS[job_id]["stdout"] = stdout
-        JOBS[job_id]["stderr"] = stderr
-        JOBS[job_id]["run_id"] = resolved_run_id
-        if returncode == 0 and result_summary.get("status") == "SUCCESS":
-            JOBS[job_id]["status"] = "SUCCESS"
-            JOBS[job_id]["result"] = result_summary
-            JOBS[job_id]["error"] = None
-        else:
-            JOBS[job_id]["status"] = "FAIL"
-            err = stderr or stdout or f"Exit code {returncode}"
-            JOBS[job_id]["error"] = _truncate(err, ERROR_TRUNCATE)
-            if result_summary:
-                JOBS[job_id]["result"] = result_summary
-            _phase(job_id, "FAIL")
-
-
 # ---------------------------------------------------------------------------
 # Request body models
 # ---------------------------------------------------------------------------
@@ -588,6 +422,22 @@ class _SecurityMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(_SecurityMiddleware)
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    """Load persisted jobs on startup (restart recovery) then resume any PENDING jobs."""
+    _service.load_all_from_disk()
+    # After load_all_from_disk, RUNNING jobs are recovered to SUCCESS or FAIL.
+    # Spawn worker threads for any PENDING jobs (e.g. queued before an API restart).
+    with _service._lock:
+        pending_ids = [
+            jid for jid, j in _service._jobs.items()
+            if j.get("status") == "PENDING"
+        ]
+    for job_id in pending_ids:
+        t = threading.Thread(target=_service._run_worker, args=(job_id,), daemon=True)
+        t.start()
 
 
 @app.get("/")
@@ -834,48 +684,38 @@ def start_run_job(tenant_id: str, loan_id: str, body: StartRunRequest) -> dict[s
         "expect_rp_hash_stable": body.expect_rp_hash_stable,
         "smoke_debug": body.smoke_debug,
     }
-    with JOBS_LOCK:
-        for j in JOBS.values():
-            if j.get("tenant_id") != tenant_id or j.get("loan_id") != loan_id:
-                continue
-            if j.get("status") not in ("PENDING", "RUNNING", "SUCCESS"):
-                continue
-            if j.get("request") == request:
-                return {
-                    "job_id": j["job_id"],
-                    "run_id": j["request"]["run_id"],
-                    "status": j["status"],
-                    "status_url": f"/jobs/{j['job_id']}",
-                }
-    job_id = str(uuid.uuid4())
-    with JOBS_LOCK:
-        JOBS[job_id] = {
-            "job_id": job_id,
-            "tenant_id": tenant_id,
-            "loan_id": loan_id,
-            "run_id": run_id,
-            "status": "PENDING",
-            "created_at_utc": _utc_now_z(),
-            "started_at_utc": None,
-            "finished_at_utc": None,
-            "request": request,
-            "result": None,
-            "error": None,
-            "stdout": None,
-            "stderr": None,
-        }
-    t = threading.Thread(
-        target=_run_job_worker,
-        args=(job_id, tenant_id, loan_id, request),
-        daemon=True,
-    )
-    t.start()
+    result = _service.enqueue_job(tenant_id, loan_id, request)
+    if result.get("status") == "PENDING":
+        t = threading.Thread(
+            target=_service._run_worker, args=(result["job_id"],), daemon=True
+        )
+        t.start()
     return {
-        "job_id": job_id,
+        "job_id": result["job_id"],
         "run_id": run_id,
-        "status": "PENDING",
-        "status_url": f"/jobs/{job_id}",
+        "status": result["status"],
+        "status_url": result["status_url"],
     }
+
+
+@app.post("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/query_jobs", status_code=202)
+def submit_query_job(
+    tenant_id: str, loan_id: str, run_id: str, body: QueryBody
+) -> dict[str, Any]:
+    """Async background query job (Step13 + Step12). Returns job_id to poll via /jobs/{job_id}."""
+    valid_profiles = ("default", "uw_conditions", "income_analysis", "uw_decision")
+    if body.profile not in valid_profiles:
+        raise HTTPException(
+            status_code=422, detail=f"profile must be one of {valid_profiles}"
+        )
+    req = {"run_id": run_id, **body.model_dump()}
+    result = _service.enqueue_job(tenant_id, loan_id, req)
+    if result.get("status") == "PENDING":
+        t = threading.Thread(
+            target=_service._run_worker, args=(result["job_id"],), daemon=True
+        )
+        t.start()
+    return result
 
 
 @app.post("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/query")
@@ -912,7 +752,7 @@ def query_run(tenant_id: str, loan_id: str, run_id: str, body: QueryBody) -> dic
         "--no-auto-retrieve",
     ]
     if body.llm_model and body.profile != "uw_decision":
-        step12_cmd += ["--llm-model", body.llm_model"]
+        step12_cmd += ["--llm-model", body.llm_model]
     # Lower evidence + tokens for API "Ask a question" so Ollama can complete on weak/sandbox servers
     step12_cmd += ["--ollama-timeout", "600", "--evidence-max-chars", "6000", "--llm-max-tokens", "400"]
     result12 = subprocess.run(step12_cmd, cwd=str(REPO_ROOT), env=env, capture_output=True, text=True)
@@ -946,64 +786,26 @@ def submit_job(tenant_id: str, loan_id: str, body: SubmitJobBody) -> dict[str, A
             detail="run_id is required when skip_process is True (run_loan_job.py contract)",
         )
     request = body.model_dump()
-    job_key = _compute_job_key(tenant_id, loan_id, request)
-    with JOBS_LOCK:
-        existing_id = JOB_KEY_INDEX.get(job_key)
-        if existing_id:
-            existing = JOBS.get(existing_id)
-            if existing and existing.get("status") in ("PENDING", "RUNNING", "SUCCESS"):
-                return {
-                    "job_id": existing_id,
-                    "status": existing["status"],
-                    "status_url": f"/jobs/{existing_id}",
-                }
-        job_id = str(uuid.uuid4())
-        JOBS[job_id] = {
-            "job_id": job_id,
-            "tenant_id": tenant_id,
-            "loan_id": loan_id,
-            "run_id": body.run_id,
-            "status": "PENDING",
-            "created_at_utc": _utc_now_z(),
-            "started_at_utc": None,
-            "finished_at_utc": None,
-            "request": request,
-            "result": None,
-            "error": None,
-            "stdout": None,
-            "stderr": None,
-        }
-        JOB_KEY_INDEX[job_key] = job_id
-    t = threading.Thread(
-        target=_run_job_worker,
-        args=(job_id, tenant_id, loan_id, request),
-        daemon=True,
-    )
-    t.start()
-    return {
-        "job_id": job_id,
-        "status": "PENDING",
-        "status_url": f"/jobs/{job_id}",
-    }
+    result = _service.enqueue_job(tenant_id, loan_id, request)
+    if result.get("status") == "PENDING":
+        t = threading.Thread(
+            target=_service._run_worker, args=(result["job_id"],), daemon=True
+        )
+        t.start()
+    return result
 
 
 @app.get("/jobs/{job_id}")
 def get_job_status(job_id: str) -> dict[str, Any]:
-    with JOBS_LOCK:
-        job = JOBS.get(job_id)
+    job = _service.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    return {k: v for k, v in job.items() if v is not None}
+    return job
 
 
 @app.get("/jobs")
 def list_jobs(limit: int = 50, status: str | None = None) -> dict[str, list[dict[str, Any]]]:
-    with JOBS_LOCK:
-        jobs = list(JOBS.values())
-    if status:
-        jobs = [j for j in jobs if j.get("status") == status]
-    jobs = sorted(jobs, key=lambda j: j.get("created_at_utc") or "", reverse=True)[:limit]
-    return {"jobs": [{k: v for k, v in j.items() if v is not None} for j in jobs]}
+    return _service.list_jobs(limit=limit, status=status)
 
 
 # ---------------------------------------------------------------------------
