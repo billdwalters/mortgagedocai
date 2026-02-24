@@ -2,7 +2,7 @@
 """
 MortgageDocAI — minimal LOCAL-ONLY FastAPI service wrapping run_loan_job.py and step12/step13.
 
-Background jobs: disk-backed JobService (DiskJobStore), daemon threads run run_loan_job.py.
+Background jobs: disk-backed JobService (DiskJobStore); job_worker.py polls disk and runs run_loan_job.py.
 No cloud APIs. No Redis/DB/Celery. Jobs persist across restarts.
 
 Usage:
