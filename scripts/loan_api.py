@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,7 +78,7 @@ def _get_base_path() -> Path:
 # ---------------------------------------------------------------------------
 # Disk-backed job service — single source of truth (replaces JOBS/JOBS_LOCK)
 # ---------------------------------------------------------------------------
-from loan_service.adapters_disk import DiskJobStore, JobKeyIndexImpl, LoanLockImpl
+from loan_service.adapters_disk import DiskJobStore, JobKeyIndexImpl, LoanLockImpl, _truncate
 from loan_service.adapters_subprocess import SubprocessRunner
 from loan_service.service import JobService
 
@@ -422,12 +423,152 @@ class _SecurityMiddleware(BaseHTTPMiddleware):
 app.add_middleware(_SecurityMiddleware)
 
 
+def _is_scope_active(job_id: str) -> bool:
+    """Return True if a systemd scope for this job_id is currently active."""
+    try:
+        r = subprocess.run(
+            ["systemctl", "is-active", "--quiet",
+             f"mortgagedocai-job-{job_id}"],
+            capture_output=True,
+            timeout=5,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _find_orphaned_running_jobs() -> list[tuple[str, str, str, str | None]]:
+    """Scan disk for RUNNING jobs whose systemd scope is still active.
+
+    Returns list of (job_id, tenant_id, loan_id, run_id).
+    Called BEFORE load_all_from_disk() so the raw on-disk status is still RUNNING.
+    """
+    nas = _get_base_path()
+    tenants_dir = nas / "tenants"
+    if not tenants_dir.is_dir():
+        return []
+    result: list[tuple[str, str, str, str | None]] = []
+    try:
+        for tdir in tenants_dir.iterdir():
+            if not tdir.is_dir():
+                continue
+            loans_dir = tdir / "loans"
+            if not loans_dir.is_dir():
+                continue
+            for ldir in loans_dir.iterdir():
+                if not ldir.is_dir():
+                    continue
+                jobs_dir = ldir / "_meta" / "jobs"
+                if not jobs_dir.is_dir():
+                    continue
+                for p in jobs_dir.iterdir():
+                    if not p.is_file() or p.suffix != ".json":
+                        continue
+                    try:
+                        with p.open() as fh:
+                            job = json.load(fh)
+                        if not isinstance(job, dict) or job.get("status") != "RUNNING":
+                            continue
+                        job_id = job.get("job_id")
+                        if not job_id:
+                            continue
+                        if _is_scope_active(job_id):
+                            result.append((
+                                job_id,
+                                job.get("tenant_id", ""),
+                                job.get("loan_id", ""),
+                                job.get("run_id"),
+                            ))
+                    except (OSError, json.JSONDecodeError, Exception):
+                        continue
+    except OSError:
+        pass
+    return result
+
+
+def _watch_orphaned_job(job_id: str) -> None:
+    """Background thread: wait for an orphaned systemd scope then finalise the job.
+
+    Called after _startup() restores a RUNNING job that had an active scope.
+    The loan lock was already released by load_all(). We don't re-acquire it
+    because the subprocess owns its own execution at this point.
+    """
+    from loan_service.adapters_subprocess import (
+        _job_unit_name,
+        _job_temp_stdout,
+        _job_temp_stderr,
+        _job_temp_rc,
+    )
+
+    unit_name = _job_unit_name(job_id)
+    deadline = time.time() + JOB_TIMEOUT_DEFAULT
+    while time.time() < deadline:
+        try:
+            r = subprocess.run(
+                ["systemctl", "is-active", "--quiet", unit_name],
+                capture_output=True,
+                timeout=5,
+            )
+            if r.returncode != 0:
+                break
+        except Exception:
+            break
+        time.sleep(5)
+
+    stdout_file = _job_temp_stdout(job_id)
+    stderr_file = _job_temp_stderr(job_id)
+    rc_file = _job_temp_rc(job_id)
+
+    try:
+        final_stdout = _truncate(stdout_file.read_text(), STDOUT_TRUNCATE)
+    except OSError:
+        final_stdout = ""
+    try:
+        final_stderr = _truncate(stderr_file.read_text(), STDERR_TRUNCATE)
+    except OSError:
+        final_stderr = ""
+    returncode = -1
+    try:
+        if rc_file.exists():
+            returncode = int(rc_file.read_text().strip())
+    except (ValueError, OSError):
+        pass
+    for p in [stdout_file, stderr_file, rc_file]:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+    _service._finalize_job(job_id, returncode, final_stdout, final_stderr)
+
+
 @app.on_event("startup")
 async def _startup() -> None:
-    """Load persisted jobs on startup (restart recovery) then resume any PENDING jobs."""
+    """Load persisted jobs on startup (restart recovery) then resume any PENDING jobs.
+
+    For RUNNING jobs whose systemd scope is still active (API was killed during a run),
+    the job is restored to RUNNING and a watcher thread finalises it when the scope exits.
+    For all other RUNNING jobs, load_all() applies standard manifest-based recovery.
+    """
+    # 1. Find jobs that are RUNNING on disk and whose systemd scope is still alive.
+    orphaned = _find_orphaned_running_jobs()
+
+    # 2. Standard load: RUNNING → SUCCESS (manifest) or FAIL (no manifest).
     _service.load_all_from_disk()
-    # After load_all_from_disk, RUNNING jobs are recovered to SUCCESS or FAIL.
-    # Spawn worker threads for any PENDING jobs (e.g. queued before an API restart).
+
+    # 3. For orphaned jobs, undo the recovery and restore RUNNING so the watcher can
+    #    finalise them correctly once the scope exits.
+    for job_id, _tid, _lid, _run_id in orphaned:
+        with _service._lock:
+            if job_id in _service._jobs:
+                _service._jobs[job_id]["status"] = "RUNNING"
+                _service._jobs[job_id]["finished_at_utc"] = None
+                _service._jobs[job_id]["error"] = None
+                _store.save(dict(_service._jobs[job_id]))
+        t = threading.Thread(target=_watch_orphaned_job, args=(job_id,), daemon=True)
+        t.start()
+
+    # 4. Resume PENDING jobs (e.g. queued before this restart).
     with _service._lock:
         pending_ids = [
             jid for jid, j in _service._jobs.items()
