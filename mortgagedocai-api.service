@@ -23,7 +23,7 @@ Environment="HF_HUB_DISABLE_PROGRESS_BARS=1"
 Environment="TRANSFORMERS_VERBOSITY=error"
 Environment="TQDM_MININTERVAL=999999"
 
-ExecStart=/opt/mortgagedocai/venv/bin/python3 scripts/loan_api.py --host 0.0.0.0 --port 8000
+ExecStart=/opt/mortgagedocai/venv/bin/python3 scripts/loan_api.py --host 127.0.0.1 --port 8000
 
 Restart=always
 RestartSec=5
