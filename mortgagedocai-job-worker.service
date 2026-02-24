@@ -1,0 +1,37 @@
+[Unit]
+Description=MortgageDocAI Job Worker
+After=network-online.target docker.service qdrant.service ollama.service
+Wants=network-online.target qdrant.service ollama.service
+
+[Service]
+Type=simple
+User=bill
+Group=bill
+WorkingDirectory=/opt/mortgagedocai
+
+# Same core env as API (keep in sync)
+Environment="MORTGAGEDOCAI_ALLOWED_TENANTS=peak"
+Environment="MORTGAGEDOCAI_SOURCE_LOANS_ROOT=/mnt/source_loans"
+Environment="PYTHONUNBUFFERED=1"
+
+# Optional: suppress HF noise globally
+Environment="HF_HUB_DISABLE_PROGRESS_BARS=1"
+Environment="TRANSFORMERS_VERBOSITY=error"
+Environment="TQDM_MININTERVAL=999999"
+
+ExecStart=/opt/mortgagedocai/venv/bin/python3 scripts/job_worker.py
+
+Restart=always
+RestartSec=2
+TimeoutStopSec=20
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
