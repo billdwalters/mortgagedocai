@@ -221,6 +221,23 @@ def test_load_all_rebuilds_missing_index():
     assert entry == ("t1", "L1"), f"expected ('t1','L1'), got {entry}"
     print("test_load_all_rebuilds_missing_index OK")
 
+def test_enqueue_writes_index():
+    """enqueue_job() creates a disk index entry so get_job can find the file path."""
+    from loan_service.adapters_disk import DiskJobStore, JobKeyIndexImpl, LoanLockImpl
+    from loan_service.service import JobService
+    nas = _tmp_nas()
+    (nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs").mkdir(parents=True)
+    store = DiskJobStore(lambda: nas)
+    svc = JobService(
+        store=store, key_index=JobKeyIndexImpl(),
+        loan_lock=LoanLockImpl(lambda: nas), runner=None, get_base_path=lambda: nas,
+    )
+    result = svc.enqueue_job("t1", "L1", {"run_id": "run-idx", "skip_intake": True})
+    job_id = result["job_id"]
+    entry = store.load_index_entry(job_id)
+    assert entry == ("t1", "L1"), f"expected ('t1','L1'), got {entry}"
+    print("test_enqueue_writes_index OK")
+
 if __name__ == "__main__":
     test_idempotency_same_job_id()
     test_restart_recovery_running_becomes_fail()
@@ -229,4 +246,5 @@ if __name__ == "__main__":
     test_disk_index_roundtrip()
     test_scan_all_raw_no_recovery()
     test_load_all_rebuilds_missing_index()
+    test_enqueue_writes_index()
     print("All hardening tests passed.")

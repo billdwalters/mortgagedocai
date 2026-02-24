@@ -81,6 +81,7 @@ class JobService:
                     self._key_index.set(job_key, job_id)
                 job["stdout"] = f"PHASE:DONE {_utc_now_z()}\n"
                 self._store.save(job)
+                self._store.save_index_entry(job_id, tenant_id, loan_id)
                 return {"job_id": job_id, "status": "SUCCESS", "status_url": f"/jobs/{job_id}"}
         job_id = str(uuid.uuid4())
         job = {
@@ -103,6 +104,7 @@ class JobService:
             self._jobs[job_id] = job
             self._key_index.set(job_key, job_id)
         self._store.save(job)
+        self._store.save_index_entry(job_id, tenant_id, loan_id)
         return {"job_id": job_id, "status": "PENDING", "status_url": f"/jobs/{job_id}"}
 
     def _append_phase(self, job: dict[str, Any], name: str) -> None:
