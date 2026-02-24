@@ -261,12 +261,12 @@ class JobService:
         return {k: v for k, v in job.items() if v is not None and k != "job_key"}
 
     def list_jobs(self, limit: int = 50, status: str | None = None) -> dict[str, list[dict[str, Any]]]:
-        with self._lock:
-            jobs = list(self._jobs.values())
+        """Scan disk for current job state. No in-memory cache used."""
+        raw = self._store.scan_all_raw()
         if status:
-            jobs = [j for j in jobs if j.get("status") == status]
-        jobs = sorted(jobs, key=lambda j: j.get("created_at_utc") or "", reverse=True)[:limit]
-        return {"jobs": [{k: v for k, v in j.items() if v is not None and k != "job_key"} for j in jobs]}
+            raw = [j for j in raw if j.get("status") == status]
+        raw = sorted(raw, key=lambda j: j.get("created_at_utc") or "", reverse=True)[:limit]
+        return {"jobs": [{k: v for k, v in j.items() if v is not None and k != "job_key"} for j in raw]}
 
     def get_jobs_raw(self) -> dict[str, dict[str, Any]]:
         """For job_runner facade: return internal jobs dict."""

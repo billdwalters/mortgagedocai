@@ -269,6 +269,35 @@ def test_get_job_reads_live_disk_state():
     assert "job_key" not in fetched, "job_key must be filtered out"
     print("test_get_job_reads_live_disk_state OK")
 
+def test_list_jobs_reads_live_disk_state():
+    """list_jobs returns current disk state even if in-memory cache is stale."""
+    import json as _json
+    from loan_service.adapters_disk import DiskJobStore, JobKeyIndexImpl, LoanLockImpl
+    from loan_service.service import JobService
+    nas = _tmp_nas()
+    (nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs").mkdir(parents=True)
+    store = DiskJobStore(lambda: nas)
+    svc = JobService(
+        store=store, key_index=JobKeyIndexImpl(),
+        loan_lock=LoanLockImpl(lambda: nas), runner=None, get_base_path=lambda: nas,
+    )
+    result = svc.enqueue_job("t1", "L1", {"run_id": "run-list-1", "skip_intake": True})
+    job_id = result["job_id"]
+
+    # Simulate worker: write SUCCESS directly to disk
+    job_path = nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs" / f"{job_id}.json"
+    raw = _json.loads(job_path.read_text())
+    raw["status"] = "SUCCESS"
+    raw["finished_at_utc"] = "2026-01-01T00:02:00Z"
+    job_path.write_text(_json.dumps(raw))
+
+    jobs_list = svc.list_jobs()["jobs"]
+    matched = [j for j in jobs_list if j["job_id"] == job_id]
+    assert len(matched) == 1, f"expected 1 match, got {len(matched)}"
+    assert matched[0]["status"] == "SUCCESS", f"expected SUCCESS, got {matched[0]['status']}"
+    assert "job_key" not in matched[0], "job_key must be filtered out"
+    print("test_list_jobs_reads_live_disk_state OK")
+
 if __name__ == "__main__":
     test_idempotency_same_job_id()
     test_restart_recovery_running_becomes_fail()
@@ -279,4 +308,5 @@ if __name__ == "__main__":
     test_load_all_rebuilds_missing_index()
     test_enqueue_writes_index()
     test_get_job_reads_live_disk_state()
+    test_list_jobs_reads_live_disk_state()
     print("All hardening tests passed.")
