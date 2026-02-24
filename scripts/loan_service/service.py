@@ -158,7 +158,9 @@ class JobService:
 
         try:
             returncode, stdout, stderr = self._runner.run(
-                request, tenant_id, loan_id, env, timeout, on_stdout_line=_on_line
+                request, tenant_id, loan_id, env, timeout,
+                on_stdout_line=_on_line,
+                job_id=job_id,
             )
         except subprocess.TimeoutExpired:
             with self._lock:
@@ -181,22 +183,49 @@ class JobService:
         finally:
             if lock_held:
                 self._loan_lock.release(tenant_id, loan_id)
+        self._finalize_job(job_id, returncode, stdout, stderr)
+
+    def _finalize_job(
+        self, job_id: str, returncode: int, stdout: str, stderr: str
+    ) -> None:
+        """Persist final job state after subprocess completion.
+
+        Called by _run_worker (normal path) and by the restart watcher (Task 5).
+        Lock is NOT held by the caller; this method acquires it as needed.
+        """
+        with self._lock:
+            if job_id not in self._jobs:
+                return
+            job = self._jobs[job_id]
+            request = job.get("request") or {}
+            tenant_id = job.get("tenant_id") or ""
+            loan_id = job.get("loan_id") or ""
+
         resolved_run_id = request.get("run_id") or parse_run_id_from_stdout(stdout)
         result_summary: dict[str, Any] = {}
         if "question" in request:
             base = self._get_base()
-            run_dir = base / "tenants" / tenant_id / "loans" / loan_id / resolved_run_id if resolved_run_id else None
+            run_dir = (
+                base / "tenants" / tenant_id / "loans" / loan_id / resolved_run_id
+                if resolved_run_id else None
+            )
             result_summary["outputs_base"] = str(run_dir) if run_dir else None
             result_summary["status"] = "SUCCESS" if returncode == 0 else "FAIL"
         elif resolved_run_id:
-            manifest = load_manifest_if_present(self._get_base, tenant_id, loan_id, resolved_run_id)
+            manifest = load_manifest_if_present(
+                self._get_base, tenant_id, loan_id, resolved_run_id
+            )
             if manifest:
                 base = self._get_base()
-                mp = base / "tenants" / tenant_id / "loans" / loan_id / resolved_run_id / "job_manifest.json"
+                mp = (
+                    base / "tenants" / tenant_id / "loans" / loan_id
+                    / resolved_run_id / "job_manifest.json"
+                )
                 result_summary["manifest_path"] = str(mp)
                 result_summary["status"] = manifest.get("status")
                 result_summary["rp_sha256"] = manifest.get("retrieval_pack_sha256")
                 result_summary["outputs_base"] = str(mp.parent) if mp.parent else None
+
         with self._lock:
             if job_id not in self._jobs:
                 return
