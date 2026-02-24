@@ -542,6 +542,33 @@ def _watch_orphaned_job(job_id: str) -> None:
     _service._finalize_job(job_id, returncode, final_stdout, final_stderr)
 
 
+WORKER_HEARTBEAT_MAX_AGE_SEC = 300  # 5 minutes
+
+
+def _warn_if_no_recent_worker_heartbeat() -> None:
+    """Log-only warning when job_worker.py heartbeat is absent or stale.
+    No response schema change. Path matches job_worker._write_heartbeat().
+    """
+    hb = _get_base_path() / "_meta" / "worker_heartbeat.json"
+    if not hb.exists():
+        print(
+            "[loan_api] WARNING: no worker heartbeat at _meta/worker_heartbeat.json; "
+            "job queued but job_worker.py may not be running",
+            file=sys.stderr,
+        )
+        return
+    try:
+        age = time.time() - hb.stat().st_mtime
+        if age > WORKER_HEARTBEAT_MAX_AGE_SEC:
+            print(
+                f"[loan_api] WARNING: worker heartbeat is {age:.0f}s old (>{WORKER_HEARTBEAT_MAX_AGE_SEC}s); "
+                "job_worker.py may be down",
+                file=sys.stderr,
+            )
+    except OSError:
+        pass
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     """Load persisted jobs on startup (restart recovery) then resume any PENDING jobs.
@@ -568,15 +595,6 @@ async def _startup() -> None:
         t = threading.Thread(target=_watch_orphaned_job, args=(job_id,), daemon=True)
         t.start()
 
-    # 4. Resume PENDING jobs (e.g. queued before this restart).
-    with _service._lock:
-        pending_ids = [
-            jid for jid, j in _service._jobs.items()
-            if j.get("status") == "PENDING"
-        ]
-    for job_id in pending_ids:
-        t = threading.Thread(target=_service._run_worker, args=(job_id,), daemon=True)
-        t.start()
 
 
 @app.get("/")
@@ -824,11 +842,7 @@ def start_run_job(tenant_id: str, loan_id: str, body: StartRunRequest) -> dict[s
         "smoke_debug": body.smoke_debug,
     }
     result = _service.enqueue_job(tenant_id, loan_id, request)
-    if result.get("status") == "PENDING":
-        t = threading.Thread(
-            target=_service._run_worker, args=(result["job_id"],), daemon=True
-        )
-        t.start()
+    _warn_if_no_recent_worker_heartbeat()
     return {
         "job_id": result["job_id"],
         "run_id": run_id,
@@ -849,11 +863,7 @@ def submit_query_job(
         )
     req = {"run_id": run_id, **body.model_dump()}
     result = _service.enqueue_job(tenant_id, loan_id, req)
-    if result.get("status") == "PENDING":
-        t = threading.Thread(
-            target=_service._run_worker, args=(result["job_id"],), daemon=True
-        )
-        t.start()
+    _warn_if_no_recent_worker_heartbeat()
     return result
 
 
@@ -926,11 +936,7 @@ def submit_job(tenant_id: str, loan_id: str, body: SubmitJobBody) -> dict[str, A
         )
     request = body.model_dump()
     result = _service.enqueue_job(tenant_id, loan_id, request)
-    if result.get("status") == "PENDING":
-        t = threading.Thread(
-            target=_service._run_worker, args=(result["job_id"],), daemon=True
-        )
-        t.start()
+    _warn_if_no_recent_worker_heartbeat()
     return result
 
 
