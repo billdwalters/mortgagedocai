@@ -184,6 +184,43 @@ def test_scan_all_raw_no_recovery():
     assert found[0]["status"] == "RUNNING", f"expected RUNNING, got {found[0]['status']}"
     print("test_scan_all_raw_no_recovery OK")
 
+
+def test_load_all_rebuilds_missing_index():
+    """load_all_from_disk() writes index entries for pre-existing jobs (migration path)."""
+    import json as _json, uuid as _uuid
+    from loan_service.adapters_disk import DiskJobStore, JobKeyIndexImpl, LoanLockImpl
+    from loan_service.service import JobService
+    nas = _tmp_nas()
+    job_dir = nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs"
+    job_dir.mkdir(parents=True)
+    job_id = str(_uuid.uuid4())
+    # Write a job file directly (bypassing enqueue - no index entry exists yet)
+    job = {
+        "job_id": job_id, "tenant_id": "t1", "loan_id": "L1", "run_id": "run-x",
+        "status": "SUCCESS",
+        "created_at_utc": "2026-01-01T00:00:00Z",
+        "started_at_utc": "2026-01-01T00:00:01Z",
+        "finished_at_utc": "2026-01-01T00:01:00Z",
+        "request": {"run_id": "run-x"}, "result": None, "error": None,
+        "stdout": None, "stderr": None,
+    }
+    (job_dir / f"{job_id}.json").write_text(_json.dumps(job))
+    store = DiskJobStore(lambda: nas)
+    # Confirm no index entry yet
+    assert store.load_index_entry(job_id) is None, "index should not exist before load_all"
+    # load_all_from_disk must create it
+    svc = JobService(
+        store=store,
+        key_index=JobKeyIndexImpl(),
+        loan_lock=LoanLockImpl(lambda: nas),
+        runner=None,
+        get_base_path=lambda: nas,
+    )
+    svc.load_all_from_disk()
+    entry = store.load_index_entry(job_id)
+    assert entry == ("t1", "L1"), f"expected ('t1','L1'), got {entry}"
+    print("test_load_all_rebuilds_missing_index OK")
+
 if __name__ == "__main__":
     test_idempotency_same_job_id()
     test_restart_recovery_running_becomes_fail()
@@ -191,4 +228,5 @@ if __name__ == "__main__":
     test_worker_processes_one_queued_job()
     test_disk_index_roundtrip()
     test_scan_all_raw_no_recovery()
+    test_load_all_rebuilds_missing_index()
     print("All hardening tests passed.")

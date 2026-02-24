@@ -271,6 +271,13 @@ class DiskJobStore:
             if not job.get("created_at_utc"):
                 job["created_at_utc"] = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z")
             jobs[job_id] = job
+            # Write index entry if absent (migration path for pre-index jobs).
+            _tid = job.get("tenant_id")
+            _lid = job.get("loan_id")
+            if job_id and _tid and _lid:
+                idx_path = self._job_index_dir() / f"{job_id}.json"
+                if not idx_path.exists():
+                    self.save_index_entry(job_id, _tid, _lid)
 
         # Restart recovery: for each RUNNING, set SUCCESS from manifest or FAIL, clear lock, persist
         lock = LoanLockImpl(self._get_base)
