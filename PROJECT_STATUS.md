@@ -1,6 +1,6 @@
 # MortgageDocAI — Project Status
 
-**Last Updated:** 2026-02-23
+**Last Updated:** 2026-02-24
 
 ## Current phase & AI context
 
@@ -1122,6 +1122,13 @@ Applied via middleware in `loan_api.py` (no new dependencies; uses Starlette).
 
 - **API key:** Env `MORTGAGEDOCAI_API_KEY`. If **set and non-empty**, every request must include header `X-API-Key` with the exact value; otherwise **401** with body `{"detail":"Unauthorized"}`. If unset or empty, all requests are allowed (dev mode). Applies to all routes including `/docs` and `/openapi.json`.
 - **Tenant allowlist:** Env `MORTGAGEDOCAI_ALLOWED_TENANTS` — comma-separated list (e.g. `peak,acme`). If **set and non-empty**, any path with `{tenant_id}` (e.g. `/tenants/peak/loans`) must have `tenant_id` in the list; otherwise **404** with body `{"detail":"Not Found"}` (not 403, to avoid leaking that the tenant is forbidden). If unset or empty, any tenant is allowed.
+
+### Internal Access Security (Tailscale)
+
+- **API is bound to `127.0.0.1:8000`** (loopback only). Port 8000 is not reachable from the LAN or WAN — Caddy terminates HTTPS on `:443` and reverse-proxies to loopback.
+- **Remote access is via Tailscale only.** All office and remote users connect through the encrypted tailnet; no plaintext LAN exposure and no public-internet routing.
+- **Optional Tailscale Serve** can front `http://127.0.0.1:8000` as `https://<hostname>.ts.net` so clients use a stable HTTPS tailnet URL without Caddy. See `docs/TAILSCALE_ROLLOUT.md`.
+- **Do not expose port 8000 on WAN.** No public domain routing; no port-forwarding of 8000 or 443 to the internet.
 
 ### Alternative: disk-backed job service (loan_service)
 
