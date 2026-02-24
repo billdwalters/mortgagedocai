@@ -356,6 +356,53 @@ class DiskJobStore:
         return None
 
 
+    def scan_all_raw(self, limit: int = JOB_RELOAD_LIMIT) -> list[dict[str, Any]]:
+        """Scan all job JSON files; return as-is with NO recovery logic applied.
+
+        Uses the same mtime-based pre-sort and JOB_RELOAD_LIMIT cap as load_all(),
+        but skips restart recovery so RUNNING stays RUNNING. Used by list_jobs()
+        to serve live disk state without writing anything.
+        """
+        base = self._get_base()
+        tenants_dir = base / "tenants"
+        if not tenants_dir.is_dir():
+            return []
+        collected: list[tuple[Path, float]] = []
+        try:
+            for tdir in tenants_dir.iterdir():
+                if not tdir.is_dir():
+                    continue
+                loans_dir = tdir / "loans"
+                if not loans_dir.is_dir():
+                    continue
+                for ldir in loans_dir.iterdir():
+                    if not ldir.is_dir():
+                        continue
+                    jobs_dir = ldir / "_meta" / "jobs"
+                    if not jobs_dir.is_dir():
+                        continue
+                    for p in jobs_dir.iterdir():
+                        if p.is_file() and p.suffix == ".json":
+                            try:
+                                collected.append((p, p.stat().st_mtime))
+                            except OSError:
+                                continue
+        except OSError:
+            return []
+        collected.sort(key=lambda x: x[1], reverse=True)
+        to_scan = collected[:limit]
+        results: list[dict[str, Any]] = []
+        for path, _ in to_scan:
+            try:
+                with path.open() as f:
+                    job = json.load(f)
+                if isinstance(job, dict) and job.get("job_id"):
+                    results.append(job)
+            except (json.JSONDecodeError, OSError):
+                continue
+        return results
+
+
 class JobKeyIndexImpl:
     """In-memory job_key -> job_id index."""
 

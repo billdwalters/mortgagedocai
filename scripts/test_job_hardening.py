@@ -160,10 +160,35 @@ def test_disk_index_roundtrip():
     assert store.load_index_entry("no-such-id") is None
     print("test_disk_index_roundtrip OK")
 
+def test_scan_all_raw_no_recovery():
+    """scan_all_raw returns jobs as-is: RUNNING stays RUNNING (no manifest recovery)."""
+    import json as _json, uuid as _uuid
+    from loan_service.adapters_disk import DiskJobStore
+    nas = _tmp_nas()
+    job_dir = nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs"
+    job_dir.mkdir(parents=True)
+    job_id = str(_uuid.uuid4())
+    job = {
+        "job_id": job_id, "tenant_id": "t1", "loan_id": "L1", "run_id": None,
+        "status": "RUNNING",   # should NOT be recovered to FAIL
+        "created_at_utc": "2026-01-01T00:00:00Z",
+        "started_at_utc": "2026-01-01T00:00:01Z",
+        "finished_at_utc": None, "request": {}, "result": None, "error": None,
+        "stdout": None, "stderr": None,
+    }
+    (job_dir / f"{job_id}.json").write_text(_json.dumps(job))
+    store = DiskJobStore(lambda: nas)
+    raw = store.scan_all_raw()
+    found = [j for j in raw if j.get("job_id") == job_id]
+    assert len(found) == 1, f"expected 1 result, got {len(found)}"
+    assert found[0]["status"] == "RUNNING", f"expected RUNNING, got {found[0]['status']}"
+    print("test_scan_all_raw_no_recovery OK")
+
 if __name__ == "__main__":
     test_idempotency_same_job_id()
     test_restart_recovery_running_becomes_fail()
     test_per_loan_lock_second_waits()
     test_worker_processes_one_queued_job()
     test_disk_index_roundtrip()
+    test_scan_all_raw_no_recovery()
     print("All hardening tests passed.")
