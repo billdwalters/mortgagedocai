@@ -82,7 +82,7 @@ def test_per_loan_lock_second_waits():
     run_times = []
 
     class SlowFakeRunner:
-        def run(self, req, tenant_id, loan_id, env, timeout):
+        def run(self, req, tenant_id, loan_id, env, timeout, job_id=None):
             run_times.append(time.time())
             time.sleep(1.5)
             return 0, f"run_id = {req.get('run_id', 'slow-1')}", ""
@@ -128,7 +128,7 @@ def test_worker_processes_one_queued_job():
         job_id = r["job_id"]
         assert r["status"] == "PENDING"
         class FakeRunner:
-            def run(self, req, tenant_id, loan_id, env, timeout):
+            def run(self, req, tenant_id, loan_id, env, timeout, job_id=None):
                 return 0, "run_id = run-1", ""
         from job_worker import run_one_cycle
         from loan_service.adapters_disk import DiskJobStore, LoanLockImpl
