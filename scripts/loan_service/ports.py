@@ -53,6 +53,7 @@ class PipelineRunner(Protocol):
         env: dict[str, str],
         timeout: int,
         on_stdout_line: Callable[[str], None] | None = None,
+        job_id: str | None = None,
     ) -> tuple[int, str, str]:
         """Run run_loan_job.py. Returns (returncode, stdout, stderr)."""
         ...
