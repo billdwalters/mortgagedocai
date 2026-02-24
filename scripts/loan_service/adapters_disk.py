@@ -320,6 +320,41 @@ class DiskJobStore:
         except OSError as e:
             print(f"[job_runner] persist failed: {e}", file=sys.stderr)
 
+    # ------------------------------------------------------------------
+    # Job-ID index: _meta/job_index/{job_id}.json -> {tenant_id, loan_id}
+    # Enables get_job(job_id) to load from disk without any in-memory cache.
+    # ------------------------------------------------------------------
+
+    def _job_index_dir(self) -> Path:
+        return self._get_base() / "_meta" / "job_index"
+
+    def save_index_entry(self, job_id: str, tenant_id: str, loan_id: str) -> None:
+        """Atomically write _meta/job_index/{job_id}.json -> {tenant_id, loan_id}."""
+        try:
+            idx_dir = self._job_index_dir()
+            idx_dir.mkdir(parents=True, exist_ok=True)
+            path = idx_dir / f"{job_id}.json"
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            with tmp.open("w") as f:
+                json.dump({"tenant_id": tenant_id, "loan_id": loan_id}, f)
+            os.replace(tmp, path)
+        except OSError as e:
+            print(f"[job_runner] index write failed {job_id}: {e}", file=sys.stderr)
+
+    def load_index_entry(self, job_id: str) -> "tuple[str, str] | None":
+        """Return (tenant_id, loan_id) from index, or None if not found."""
+        path = self._job_index_dir() / f"{job_id}.json"
+        try:
+            with path.open() as f:
+                data = json.load(f)
+            tid = data.get("tenant_id")
+            lid = data.get("loan_id")
+            if tid and lid:
+                return (tid, lid)
+        except (OSError, json.JSONDecodeError, KeyError):
+            pass
+        return None
+
 
 class JobKeyIndexImpl:
     """In-memory job_key -> job_id index."""

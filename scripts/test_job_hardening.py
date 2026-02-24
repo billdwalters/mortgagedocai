@@ -144,9 +144,26 @@ def test_worker_processes_one_queued_job():
     print("test_worker_processes_one_queued_job OK")
 
 
+
+def test_disk_index_roundtrip():
+    """save_index_entry writes; load_index_entry reads back correctly (no in-memory cache)."""
+    import uuid as _uuid
+    from loan_service.adapters_disk import DiskJobStore
+    nas = _tmp_nas()
+    store = DiskJobStore(lambda: nas)
+    job_id = str(_uuid.uuid4())
+    # Write and read back
+    store.save_index_entry(job_id, "t1", "L1")
+    result = store.load_index_entry(job_id)
+    assert result == ("t1", "L1"), f"expected ('t1','L1'), got {result}"
+    # Unknown job_id returns None
+    assert store.load_index_entry("no-such-id") is None
+    print("test_disk_index_roundtrip OK")
+
 if __name__ == "__main__":
     test_idempotency_same_job_id()
     test_restart_recovery_running_becomes_fail()
     test_per_loan_lock_second_waits()
     test_worker_processes_one_queued_job()
+    test_disk_index_roundtrip()
     print("All hardening tests passed.")
