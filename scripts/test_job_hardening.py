@@ -32,12 +32,12 @@ def test_idempotency_same_job_id():
         job_runner.JOB_KEY_INDEX.clear()
         r1 = job_runner.enqueue_job("t1", "L1", req)
         r2 = job_runner.enqueue_job("t1", "L1", req)
-    assert r1["job_id"] == r2["job_id"], (r1, r2)
-    assert "job_id" in r1 and "status" in r1 and "status_url" in r1
-    assert "job_key" not in r1 and "job_key" not in r2
-    job = job_runner.get_job(r1["job_id"])
-    assert job is not None
-    assert "job_key" not in job
+        assert r1["job_id"] == r2["job_id"], (r1, r2)
+        assert "job_id" in r1 and "status" in r1 and "status_url" in r1
+        assert "job_key" not in r1 and "job_key" not in r2
+        job = job_runner.get_job(r1["job_id"])
+        assert job is not None
+        assert "job_key" not in job
     print("test_idempotency_same_job_id OK")
 
 
@@ -68,10 +68,10 @@ def test_restart_recovery_running_becomes_fail():
         job_runner.JOBS.clear()
         job_runner.JOB_KEY_INDEX.clear()
         job_runner.load_jobs_from_disk()
-    j = job_runner.get_job(job_id)
-    assert j is not None, "job should be loaded"
-    assert j["status"] == "FAIL", j
-    assert "Recovered after restart" in (j.get("error") or ""), j
+        j = job_runner.get_job(job_id)
+        assert j is not None, "job should be loaded"
+        assert j["status"] == "FAIL", j
+        assert "Recovered after restart" in (j.get("error") or ""), j
     print("test_restart_recovery_running_becomes_fail OK")
 
 
@@ -109,8 +109,8 @@ def test_per_loan_lock_second_waits():
             if j1 and j2 and j1.get("status") in ("SUCCESS", "FAIL") and j2.get("status") in ("SUCCESS", "FAIL"):
                 break
             time.sleep(0.5)
-    j1 = job_runner.get_job(r1["job_id"])
-    j2 = job_runner.get_job(r2["job_id"])
+        j1 = job_runner.get_job(r1["job_id"])
+        j2 = job_runner.get_job(r2["job_id"])
     assert j1 and j2
     assert j1["status"] in ("SUCCESS", "FAIL") and j2["status"] in ("SUCCESS", "FAIL")
     assert len(run_times) >= 2, run_times
@@ -139,8 +139,8 @@ def test_worker_processes_one_queued_job():
         assert ok
         job_runner.load_jobs_from_disk()
         j = job_runner.get_job(job_id)
-    assert j is not None
-    assert j["status"] in ("SUCCESS", "FAIL")
+        assert j is not None
+        assert j["status"] in ("SUCCESS", "FAIL")
     print("test_worker_processes_one_queued_job OK")
 
 
@@ -238,6 +238,37 @@ def test_enqueue_writes_index():
     assert entry == ("t1", "L1"), f"expected ('t1','L1'), got {entry}"
     print("test_enqueue_writes_index OK")
 
+def test_get_job_reads_live_disk_state():
+    """get_job returns current disk state even if in-memory cache has stale PENDING."""
+    import json as _json
+    from loan_service.adapters_disk import DiskJobStore, JobKeyIndexImpl, LoanLockImpl
+    from loan_service.service import JobService
+    nas = _tmp_nas()
+    (nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs").mkdir(parents=True)
+    store = DiskJobStore(lambda: nas)
+    svc = JobService(
+        store=store, key_index=JobKeyIndexImpl(),
+        loan_lock=LoanLockImpl(lambda: nas), runner=None, get_base_path=lambda: nas,
+    )
+    # Enqueue: PENDING in memory + disk
+    result = svc.enqueue_job("t1", "L1", {"run_id": "run-live", "skip_intake": True})
+    job_id = result["job_id"]
+    assert result["status"] == "PENDING"
+
+    # Simulate job_worker.py: write RUNNING directly to disk (not via svc)
+    job_path = nas / "tenants" / "t1" / "loans" / "L1" / "_meta" / "jobs" / f"{job_id}.json"
+    raw = _json.loads(job_path.read_text())
+    raw["status"] = "RUNNING"
+    raw["started_at_utc"] = "2026-01-01T00:00:01Z"
+    job_path.write_text(_json.dumps(raw))
+
+    # get_job must return RUNNING, not the stale PENDING from in-memory cache
+    fetched = svc.get_job(job_id)
+    assert fetched is not None
+    assert fetched["status"] == "RUNNING", f"expected RUNNING, got {fetched['status']}"
+    assert "job_key" not in fetched, "job_key must be filtered out"
+    print("test_get_job_reads_live_disk_state OK")
+
 if __name__ == "__main__":
     test_idempotency_same_job_id()
     test_restart_recovery_running_becomes_fail()
@@ -247,4 +278,5 @@ if __name__ == "__main__":
     test_scan_all_raw_no_recovery()
     test_load_all_rebuilds_missing_index()
     test_enqueue_writes_index()
+    test_get_job_reads_live_disk_state()
     print("All hardening tests passed.")

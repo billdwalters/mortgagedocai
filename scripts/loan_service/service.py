@@ -248,8 +248,14 @@ class JobService:
             self._store.save(dict(self._jobs[job_id]))
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            job = self._jobs.get(job_id)
+        """Load job from disk; uses index file for tenant/loan path lookup.
+        No reliance on in-memory cache for job state or path correctness.
+        """
+        entry = self._store.load_index_entry(job_id)
+        if entry is None:
+            return None
+        tenant_id, loan_id = entry
+        job = self._store.load_job(tenant_id, loan_id, job_id)
         if job is None:
             return None
         return {k: v for k, v in job.items() if v is not None and k != "job_key"}
