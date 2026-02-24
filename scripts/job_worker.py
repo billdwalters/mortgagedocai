@@ -95,7 +95,7 @@ def run_one_cycle(
         env = get_job_env(request)
         try:
             returncode, stdout, stderr = runner.run(
-                request, tid, lid, env, timeout
+                request, tid, lid, env, timeout, job_id=jid
             )
         except subprocess.TimeoutExpired:
             job["status"] = "FAIL"
