@@ -955,6 +955,7 @@ def list_jobs(limit: int = 50, status: str | None = None) -> dict[str, list[dict
 
 # ---------------------------------------------------------------------------
 # Web UI (static single-page app)
+# IMPORTANT: Access via http://<server>:8000/ui — file:// is not supported.
 # ---------------------------------------------------------------------------
 WEBUI_DIR = SCRIPTS_DIR / "webui"
 

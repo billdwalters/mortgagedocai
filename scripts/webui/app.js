@@ -5,6 +5,18 @@
 (function () {
   "use strict";
 
+  // Guard: file:// is not a supported origin. Show banner and stop.
+  if (window.location.protocol === "file:") {
+    document.body.innerHTML =
+      '<div style="font-family:sans-serif;padding:2rem;background:#1e1b4b;color:#fbbf24;' +
+      'border:2px solid #fbbf24;border-radius:8px;max-width:600px;margin:4rem auto;text-align:center">' +
+      '<strong style="font-size:1.2rem">&#9888; file:// is not supported</strong><br><br>' +
+      'This UI must be opened from the API server:<br><br>' +
+      '<code style="background:#312e81;padding:4px 10px;border-radius:4px">http://&lt;host&gt;:8000/ui</code>' +
+      '</div>';
+    return;
+  }
+
   const STORAGE_API_KEY = "mortgagedocai_api_key";
   const STORAGE_TENANT = "mortgagedocai_tenant_id";
   const STORAGE_BASE_URL = "mortgagedocai_base_url";
@@ -43,7 +55,7 @@
   function getBaseUrl() {
     const inp = el("base-url");
     const v = (inp && inp.value) ? inp.value.trim() : (localStorage.getItem(STORAGE_BASE_URL) || "");
-    return v ? v.replace(/\/$/, "") : "";
+    return v ? v.replace(/\/$/, "") : window.location.origin;
   }
 
   function getApiKey() {
