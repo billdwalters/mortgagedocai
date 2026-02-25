@@ -163,11 +163,17 @@ cmd_verify() {
     CHECK_HOST="${TS_IP}"
   fi
 
-  # Read API key: env override first, then auto-detect from deployed service file
+  # Read API key: env override first, then read from /etc/mortgagedocai/env
+  # (key is NOT in the service file — it lives in EnvironmentFile=/etc/mortgagedocai/env)
   API_KEY="${MORTGAGEDOCAI_API_KEY:-}"
   if [[ -z "${API_KEY}" ]]; then
-    API_KEY="$(grep -oP '(?<=MORTGAGEDOCAI_API_KEY=)\S+' \
-        /etc/systemd/system/mortgagedocai-api.service 2>/dev/null || true)"
+    API_KEY="$(sudo grep -oP '(?<=MORTGAGEDOCAI_API_KEY=)\S+' \
+        /etc/mortgagedocai/env 2>/dev/null || true)"
+  fi
+  # Skip health check if key is still the bootstrap placeholder
+  if [[ "${API_KEY:-}" == "CHANGE_ME" ]]; then
+    warn "API key is CHANGE_ME in /etc/mortgagedocai/env — skipping authenticated health check"
+    API_KEY=""
   fi
 
   HEALTH_URL="http://${CHECK_HOST}:${API_PORT}/health"
@@ -254,10 +260,9 @@ cmd_install() {
   say "OS packages"
   sudo apt-get update -y
   # cifs-utils: required for CIFS/SMB mounts (source_loans, nas_*)
-  # nfs-common:  kept for optional NFS fallback
   sudo apt-get install -y \
       python3-venv python3-pip \
-      cifs-utils nfs-common \
+      cifs-utils \
       jq curl \
       debian-keyring debian-archive-keyring apt-transport-https \
       libnss3-tools
@@ -314,6 +319,9 @@ cmd_install() {
   # loan_service module — required for job orchestration (job_worker, adapters_disk, etc.)
   if [[ -d "${SOURCE_DIR}/loan_service" ]]; then
     cp -rf "${SOURCE_DIR}/loan_service" "${SCRIPTS_DIR}/loan_service"
+    # a+rX: ensure all files are readable; capital X sets +x on dirs (for traversal)
+    # and on files already executable — does NOT chmod +x regular Python modules
+    chmod -R a+rX "${SCRIPTS_DIR}/loan_service"
     echo "  [OK] loan_service module deployed"
   else
     warn "loan_service/ not found at ${SOURCE_DIR}/loan_service — job orchestration will fail"
@@ -337,11 +345,11 @@ cmd_install() {
 
   # ── 5. Python venv ───────────────────────────────────────────────────────────
   say "Python venv  (${VENV_DIR})"
-  if [[ ! -d "${VENV_DIR}" ]]; then
+  if [[ ! -f "${VENV_DIR}/bin/activate" ]]; then
     python3 -m venv "${VENV_DIR}"
     echo "  [OK] venv created"
   else
-    echo "  [OK] venv already exists"
+    echo "  [OK] venv already exists (${VENV_DIR}/bin/activate present)"
   fi
   # shellcheck disable=SC1091
   source "${VENV_DIR}/bin/activate"
@@ -386,6 +394,40 @@ cmd_install() {
     fi
   fi
 
+  # ── 6b. Centralized environment files ────────────────────────────────────────
+  say "Environment files  (/etc/mortgagedocai/)"
+  sudo mkdir -p /etc/mortgagedocai
+
+  # /etc/mortgagedocai/env: create with placeholders, NEVER overwrite if already exists
+  if [[ ! -f /etc/mortgagedocai/env ]]; then
+    sudo tee /etc/mortgagedocai/env > /dev/null <<'ENVEOF'
+MORTGAGEDOCAI_API_KEY=CHANGE_ME
+MORTGAGEDOCAI_ALLOWED_TENANTS=peak
+MORTGAGEDOCAI_SOURCE_LOANS_ROOT=/mnt/source_loans
+ENVEOF
+    sudo chown root:root /etc/mortgagedocai/env
+    sudo chmod 600 /etc/mortgagedocai/env
+    echo "  [OK] /etc/mortgagedocai/env created — edit MORTGAGEDOCAI_API_KEY before production"
+  else
+    echo "  [OK] /etc/mortgagedocai/env already exists — not overwritten"
+  fi
+
+  # /etc/mortgagedocai/env.local: touch only (optional local overrides), NEVER overwrite
+  if [[ ! -f /etc/mortgagedocai/env.local ]]; then
+    sudo touch /etc/mortgagedocai/env.local
+    sudo chown root:root /etc/mortgagedocai/env.local
+    sudo chmod 600 /etc/mortgagedocai/env.local
+    echo "  [OK] /etc/mortgagedocai/env.local created (empty, for local overrides)"
+  else
+    echo "  [OK] /etc/mortgagedocai/env.local already exists — not overwritten"
+  fi
+
+  # Warn if API key is still placeholder (do NOT print the actual key value)
+  _api_key_val="$(sudo grep -oP '(?<=MORTGAGEDOCAI_API_KEY=)\S+' /etc/mortgagedocai/env 2>/dev/null || true)"
+  if [[ "${_api_key_val}" == "CHANGE_ME" ]]; then
+    warn "MORTGAGEDOCAI_API_KEY is still CHANGE_ME in /etc/mortgagedocai/env — update before production"
+  fi
+
   # ── 7. Systemd service units ─────────────────────────────────────────────────
   say "Systemd service units"
   for svc in mortgagedocai-api.service mortgagedocai-job-worker.service; do
@@ -400,19 +442,21 @@ cmd_install() {
 
   sudo systemctl daemon-reload
 
-  # Tailscale IP patch: keep --host in sync with current Tailscale IPv4
+  # Tailscale IP patch: keep --host in ExecStart in sync with current Tailscale IPv4.
+  # Uses a POSIX regex replacement (--host [^ ]*) — safe regardless of current host value.
   TS_IP="$(tailscale ip -4 2>/dev/null || true)"
   if [[ -n "${TS_IP}" ]]; then
-    CURRENT_HOST="$(grep -oP '(?<=--host )\S+' \
-        /etc/systemd/system/mortgagedocai-api.service 2>/dev/null || echo "127.0.0.1")"
-    if [[ "${CURRENT_HOST}" != "${TS_IP}" ]]; then
+    _svc=/etc/systemd/system/mortgagedocai-api.service
+    CURRENT_HOST="$(grep -oP '(?<=--host )\S+' "${_svc}" 2>/dev/null | head -1 || true)"
+    if [[ -z "${CURRENT_HOST}" ]]; then
+      warn "No --host argument found in ExecStart of ${_svc} — skipping Tailscale bind patch"
+    elif [[ "${CURRENT_HOST}" == "${TS_IP}" ]]; then
+      echo "  [OK] API already bound to Tailscale IP: ${TS_IP}"
+    else
       say "Patching API service bind address: ${CURRENT_HOST} → ${TS_IP}"
-      sudo sed -i "s|--host ${CURRENT_HOST}|--host ${TS_IP}|g" \
-          /etc/systemd/system/mortgagedocai-api.service
+      sudo sed -i "s/--host [^ ]*/--host ${TS_IP}/" "${_svc}"
       sudo systemctl daemon-reload
       echo "  [OK] mortgagedocai-api.service will bind to ${TS_IP}:${API_PORT}"
-    else
-      echo "  [OK] API already bound to Tailscale IP: ${TS_IP}"
     fi
   else
     warn "Tailscale not connected — API will bind to 127.0.0.1 (loopback fallback)"
