@@ -22,6 +22,8 @@
   const STORAGE_BASE_URL = "mortgagedocai_base_url";
   const SOURCE_PATH_PREFIX = "mortgagedocai_source_path_";
   const POLL_INTERVAL_MS = 2000;
+  const STALL_MS = 120000;   // 2 min without job-state change → stale
+  const MAX_FAILURES = 10;   // consecutive poll failures → stop
 
   /** Run ID heuristic: looks like timestamp (contains T, ends with Z) or matches YYYY-MM-DDTHH... */
   function isLikelyRunId(id) {
@@ -575,6 +577,59 @@
   }
 
   function startJobPolling(jobId) {
+    var consecutiveFailures = 0;
+    var lastOkAtMs = Date.now();
+    var lastChangeAtMs = Date.now();
+    var lastFingerprint = null;
+    var pollTimer = null;
+    var stopped = false;
+
+    function jobFingerprint(job) {
+      if (!job) return "";
+      var phases = parsePhaseLines(job.stdout || "");
+      var lastPhase = phases.length ? phases[phases.length - 1].name : "";
+      return (job.status || "") + "|" + String((job.stdout || "").length) + "|" + lastPhase +
+        "|" + (job.started_at_utc || "") + "|" + (job.finished_at_utc || "");
+    }
+
+    function showPollWarning(msg) {
+      var warningEl = el("poll-warning");
+      if (!warningEl) return;
+      warningEl.innerHTML = "";
+      var p = document.createElement("p");
+      var lastOkStr = new Date(lastOkAtMs).toLocaleTimeString();
+      p.textContent = msg + " Last successful poll: " + lastOkStr +
+        ". Consecutive failures: " + consecutiveFailures + ".";
+      warningEl.appendChild(p);
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Retry polling";
+      btn.addEventListener("click", retryPolling);
+      warningEl.appendChild(btn);
+      warningEl.classList.remove("hidden");
+    }
+
+    function hidePollWarning() {
+      var warningEl = el("poll-warning");
+      if (warningEl) { warningEl.classList.add("hidden"); warningEl.innerHTML = ""; }
+    }
+
+    function stopPolling() {
+      stopped = true;
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    function retryPolling() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      consecutiveFailures = 0;
+      lastOkAtMs = Date.now();
+      lastChangeAtMs = Date.now();
+      stopped = false;
+      hidePollWarning();
+      poll();
+      pollTimer = setInterval(poll, POLL_INTERVAL_MS);
+    }
+
     function setJobFields(job) {
       if (!job) return;
       if (el("progress-status-value")) el("progress-status-value").textContent = job.status || "—";
@@ -592,13 +647,36 @@
       const phases = parsePhaseLines(stdout);
       renderStepper(phases);
     }
+
     function poll() {
+      if (stopped) return;
       apiJson("/jobs/" + encodeURIComponent(jobId))
         .then(function (job) {
+          consecutiveFailures = 0;
+          lastOkAtMs = Date.now();
+
+          var fp = jobFingerprint(job);
+          if (fp !== lastFingerprint) {
+            lastChangeAtMs = Date.now();
+            lastFingerprint = fp;
+          }
+
+          var status = (job && job.status) ? job.status : "";
+
+          if (status === "PENDING" || status === "RUNNING" || status === "QUEUED") {
+            if (Date.now() - lastChangeAtMs > STALL_MS) {
+              setJobFields(job);
+              showPollWarning("Job appears stalled (no progress updates for 2m).");
+              stopPolling();
+              return;
+            }
+          }
+
           setJobFields(job);
-          const status = (job && job.status) ? job.status : "";
+          hidePollWarning();
+
           if (status === "SUCCESS" || status === "FAIL") {
-            if (pollTimer) clearInterval(pollTimer);
+            stopPolling();
             if (status === "SUCCESS" && job.run_id && selectedLoanId) {
               selectedRunId = job.run_id;
               lastProcessedCache[selectedLoanId] = { run_id: job.run_id, generated_at_utc: job.run_id };
@@ -607,9 +685,23 @@
             }
           }
         })
-        .catch(function () {});
+        .catch(function () {
+          consecutiveFailures++;
+          var sinceLastOk = Date.now() - lastOkAtMs;
+          if (consecutiveFailures >= MAX_FAILURES) {
+            showPollWarning(
+              "Connection lost to server \u2014 polling stopped. Check VPN/Tailscale or API service."
+            );
+            stopPolling();
+          } else if (consecutiveFailures >= 3 || sinceLastOk > 15000) {
+            showPollWarning(
+              "Connection issues detected \u2014 retrying in background. Check VPN/Tailscale or API service."
+            );
+          }
+        });
     }
-    var pollTimer = setInterval(poll, POLL_INTERVAL_MS);
+
+    pollTimer = setInterval(poll, POLL_INTERVAL_MS);
     poll();
   }
 
