@@ -1123,12 +1123,22 @@ Applied via middleware in `loan_api.py` (no new dependencies; uses Starlette).
 - **API key:** Env `MORTGAGEDOCAI_API_KEY`. If **set and non-empty**, every request must include header `X-API-Key` with the exact value; otherwise **401** with body `{"detail":"Unauthorized"}`. If unset or empty, all requests are allowed (dev mode). Applies to all routes including `/docs` and `/openapi.json`.
 - **Tenant allowlist:** Env `MORTGAGEDOCAI_ALLOWED_TENANTS` — comma-separated list (e.g. `peak,acme`). If **set and non-empty**, any path with `{tenant_id}` (e.g. `/tenants/peak/loans`) must have `tenant_id` in the list; otherwise **404** with body `{"detail":"Not Found"}` (not 403, to avoid leaking that the tenant is forbidden). If unset or empty, any tenant is allowed.
 
-### Internal Access Security (Tailscale)
+### Network Security Architecture (2026-02-25)
 
-- **API is bound to `127.0.0.1:8000`** (loopback only). Port 8000 is not reachable from the LAN or WAN — Caddy terminates HTTPS on `:443` and reverse-proxies to loopback.
-- **Remote access is via Tailscale only.** All office and remote users connect through the encrypted tailnet; no plaintext LAN exposure and no public-internet routing.
-- **Optional Tailscale Serve** can front `http://127.0.0.1:8000` as `https://<hostname>.ts.net` so clients use a stable HTTPS tailnet URL without Caddy. See `docs/TAILSCALE_ROLLOUT.md`.
-- **Do not expose port 8000 on WAN.** No public domain routing; no port-forwarding of 8000 or 443 to the internet.
+The API is **Tailscale-only**: it binds exclusively to the server's Tailscale IPv4 address and is unreachable from the LAN or WAN.
+
+| Layer | Detail |
+|---|---|
+| **Bind address** | Tailscale IPv4 only (`--host <tailscale-ip>` e.g. `100.80.98.97`). Not `0.0.0.0`, not `127.0.0.1`, not any LAN interface. |
+| **LAN exposure** | None. Port 8000 is not reachable on the local LAN. |
+| **WAN exposure** | None. No port-forwarding, no public domain, no reverse-proxy to the internet. |
+| **Encrypted transport** | Tailscale (WireGuard-based). All client↔server traffic is end-to-end encrypted by the tailnet. No additional TLS/HTTPS layer is needed or used. |
+| **ACL enforcement** | Tailscale policy restricts port 8000 to devices with tag `tag:mortgagedocai`. Non-tagged tailnet peers cannot reach the API. |
+| **API key auth** | `MORTGAGEDOCAI_API_KEY` env var (see §"API security" above). Provides a second authentication layer independent of Tailscale ACL. |
+| **Caddy / reverse proxy** | **Not used.** Removed from the default deployment path. Caddy HTTPS-over-loopback was the prior model; it is superseded by Tailscale encrypted transport. |
+| **UFW / nftables** | UFW disabled on the AI server. nftables managed by system defaults. Port 8000 is inaccessible from outside Tailscale regardless. |
+
+**Do not expose port 8000 on WAN.** Do not bind to `0.0.0.0`. Tailscale provides the only network path to the API.
 
 ### Alternative: disk-backed job service (loan_service)
 
