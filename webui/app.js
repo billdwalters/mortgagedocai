@@ -852,8 +852,12 @@
           appendMessage("assistant", "No job_id returned.");
           return;
         }
-        const answer = await pollForQueryJobAnswer(jobId, profile, runId);
-        appendMessage("assistant", answer || "(No answer returned)");
+        const result = await pollForQueryJobAnswer(jobId, profile, runId);
+        if (result.ok) {
+          appendMessage("assistant", result.answer || "(No answer returned)");
+        } else {
+          appendErrorPanel(result.job);
+        }
       } catch (e) {
         appendMessage("assistant", "Error: " + (e.message || e));
       } finally {
@@ -863,35 +867,57 @@
 
     function pollForQueryJobAnswer(jobId, profile, runId) {
       return new Promise(function (resolve) {
-        let attempts = 0;
-        const maxAttempts = 120;
+        var attempts = 0;
+        var maxAttempts = 120;
         function poll() {
           attempts++;
           apiJson("/jobs/" + encodeURIComponent(jobId)).then(function (job) {
-            const status = (job && job.status) ? job.status : "";
+            var status = (job && job.status) ? job.status : "";
             if (status === "SUCCESS") {
-              const base = getBaseUrl();
-              const tenant = getTenantId();
-              const mdUrl = base + "/tenants/" + encodeURIComponent(tenant) + "/loans/" + encodeURIComponent(selectedLoanId) + "/runs/" + encodeURIComponent(runId) + "/artifacts/" + encodeURIComponent(profile) + "/answer.md";
-              apiFetch(mdUrl).then(function (r) { return r.text(); }).then(function (text) {
-                resolve(text && text.trim() ? text : null);
-              }).catch(function () {
-                const jsonUrl = base + "/tenants/" + encodeURIComponent(tenant) + "/loans/" + encodeURIComponent(selectedLoanId) + "/runs/" + encodeURIComponent(runId) + "/artifacts/" + encodeURIComponent(profile) + "/answer.json";
-                apiFetch(jsonUrl).then(function (r) { return r.json(); }).then(function (obj) {
-                  resolve((obj && obj.answer) ? obj.answer : (obj ? JSON.stringify(obj) : null));
+              var tenant = getTenantId();
+              var artifactsPath = "/tenants/" + encodeURIComponent(tenant) +
+                "/loans/" + encodeURIComponent(selectedLoanId) +
+                "/runs/" + encodeURIComponent(runId) + "/artifacts";
+              function fetchAnswer() {
+                var jsonPath = artifactsPath + "/" +
+                  encodeURIComponent(profile) + "/answer.json";
+                apiFetch(jsonPath).then(function (r) {
+                  if (!r.ok) { throw new Error(r.status); }
+                  return r.json();
+                }).then(function (obj) {
+                  var text = (obj && obj.answer) ? obj.answer : (obj ? JSON.stringify(obj) : null);
+                  resolve({ ok: true, answer: text, job: job });
                 }).catch(function () {
-                  resolve(null);
+                  resolve({ ok: false, answer: null, job: Object.assign({}, job, { error: "Could not fetch answer artifact." }) });
                 });
+              }
+              apiJson(artifactsPath).then(function (artifacts) {
+                var profileEntry = (artifacts && artifacts.profiles ? artifacts.profiles : []).find(function (p) { return p.name === profile; });
+                var fileEntry = profileEntry ? (profileEntry.files || []).find(function (f) { return f.name === "answer.json"; }) : null;
+                var mtime = fileEntry ? fileEntry.mtime_utc : null;
+                var startedAt = job.started_at_utc || "";
+                if (mtime && startedAt && mtime < startedAt) {
+                  resolve({ ok: false, answer: null, job: Object.assign({}, job, { error: "Artifact is older than this job; refusing to display." }) });
+                  return;
+                }
+                fetchAnswer();
+              }).catch(function () {
+                // artifacts check failed — fetch answer anyway (fail-open)
+                fetchAnswer();
               });
               return;
             }
             if (status === "FAIL" || attempts >= maxAttempts) {
-              resolve(null);
+              var resolvedJob = job;
+              if (attempts >= maxAttempts && status !== "FAIL") {
+                resolvedJob = Object.assign({}, job, { error: (job && job.error) || "Timed out waiting for job result." });
+              }
+              resolve({ ok: false, answer: null, job: resolvedJob });
               return;
             }
             setTimeout(poll, POLL_INTERVAL_MS);
           }).catch(function () {
-            resolve(null);
+            resolve({ ok: false, answer: null, job: null });
           });
         }
         poll();
