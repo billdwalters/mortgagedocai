@@ -665,15 +665,13 @@
 
           if (status === "PENDING" || status === "RUNNING" || status === "QUEUED") {
             if (Date.now() - lastChangeAtMs > STALL_MS) {
-              setJobFields(job);
               showPollWarning("Job appears stalled (no progress updates for 2m).");
               stopPolling();
-              return;
             }
           }
 
           setJobFields(job);
-          hidePollWarning();
+          if (!stopped) { hidePollWarning(); }
 
           if (status === "SUCCESS" || status === "FAIL") {
             stopPolling();
