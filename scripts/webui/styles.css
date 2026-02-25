@@ -536,3 +536,9 @@ body {
   cursor: pointer;
 }
 .chat-send-row button:hover { opacity: 0.9; }
+
+/* ——— Source path validation feedback ——— */
+.source-validation-msg { font-size: 0.8125rem; margin: 0.25rem 0 0; }
+.source-validation-ok   { color: var(--success); }
+.source-validation-error { color: var(--error); }
+.source-validation-warn  { color: var(--warn); }

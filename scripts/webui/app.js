@@ -263,6 +263,31 @@
     } catch (_) {}
   }
 
+  /** Show a validation message near the Process Loan button. type: "ok" | "error" | "warn" */
+  function showSourceValidationMsg(msg, type) {
+    var msgEl = el("source-validation-msg");
+    if (!msgEl) return;
+    msgEl.textContent = msg;
+    msgEl.className = "source-validation-msg source-validation-" + type;
+    msgEl.hidden = false;
+  }
+
+  function clearSourceValidationMsg() {
+    var msgEl = el("source-validation-msg");
+    if (msgEl) { msgEl.hidden = true; msgEl.textContent = ""; }
+  }
+
+  async function validateSourcePath(tenant, loanId, sourcePath) {
+    var url = "/tenants/" + encodeURIComponent(tenant) + "/loans/" + encodeURIComponent(loanId) + "/source_path/validate";
+    var res = await apiFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_path: sourcePath }),
+    });
+    if (!res.ok) throw new Error(res.status + " " + await res.text());
+    return await res.json();
+  }
+
   // ——— State ———
   let selectedLoanId = null;
   let selectedRunId = null;
@@ -336,6 +361,7 @@
   }
 
   async function selectLoan(loanId) {
+    clearSourceValidationMsg();
     selectedLoanId = loanId;
     selectedRunId = null;
     const item = sourceLoanItemsByLoanId[loanId];
@@ -354,6 +380,15 @@
       const storedPath = getSourcePathForLoan(loanId);
       if (pathInput) pathInput.value = storedPath || "";
       if (display) display.textContent = storedPath || "(select a loan from source list)";
+      if (storedPath) {
+        var _tenant = getTenantId();
+        var _lid = loanId;
+        validateSourcePath(_tenant, _lid, storedPath)
+          .then(function (v) {
+            if (!v.ok) showSourceValidationMsg("Cached source folder is stale. Please re-select.", "warn");
+          })
+          .catch(function () {});
+      }
       if (el("overview-last-processed")) el("overview-last-processed").textContent = "Unknown";
       const last = await getLastProcessedForLoan(loanId);
       if (last) selectedRunId = last.run_id;
@@ -391,6 +426,7 @@
     }
     if (input) {
       input.addEventListener("change", function () {
+        clearSourceValidationMsg();
         const path = input.value.trim();
         if (selectedLoanId) setSourcePathForLoan(selectedLoanId, path);
         if (display) display.textContent = path || "(not set — click Browse…)";
@@ -457,6 +493,18 @@
         return;
       }
       const tenant = getTenantId();
+      clearSourceValidationMsg();
+      try {
+        const validation = await validateSourcePath(tenant, selectedLoanId, sourcePath);
+        if (!validation.ok) {
+          showSourceValidationMsg("Source folder not found or invalid: " + (validation.reason || "unknown"), "error");
+          return;
+        }
+        showSourceValidationMsg("Source folder OK (mtime: " + (validation.mtime_utc || "unknown") + ")", "ok");
+      } catch (valErr) {
+        showSourceValidationMsg("Could not validate source folder: " + (valErr.message || valErr), "error");
+        return;
+      }
       const body = {
         source_path: sourcePath,
         run_id: null,

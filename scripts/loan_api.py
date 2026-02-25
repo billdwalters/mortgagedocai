@@ -861,22 +861,11 @@ def validate_source_path(tenant_id: str, loan_id: str, body: ValidateSourcePathR
     """Validate a proposed source_path: exists, is_dir, within SOURCE_LOANS_ROOT."""
     raw = (body.source_path or "").strip() if body.source_path is not None else ""
     if not raw:
-        return {
-            "ok": False, "exists": False, "is_dir": False,
-            "within_root": False, "normalized": None,
-            "message": "source_path required",
-        }
+        return {"ok": False, "source_path": raw, "resolved_path": None, "reason": "empty_source_path", "mtime_utc": None}
     try:
         p = Path(raw).resolve()
-        normalized = str(p)
     except Exception:
-        return {
-            "ok": False, "exists": False, "is_dir": False,
-            "within_root": False, "normalized": None,
-            "message": "source_path invalid",
-        }
-    exists = p.exists()
-    is_dir = p.is_dir()
+        return {"ok": False, "source_path": raw, "resolved_path": None, "reason": "invalid_path", "mtime_utc": None}
     try:
         root_resolved = SOURCE_LOANS_ROOT.resolve()
         p.relative_to(root_resolved)
@@ -884,28 +873,22 @@ def validate_source_path(tenant_id: str, loan_id: str, body: ValidateSourcePathR
     except (ValueError, OSError):
         within_root = False
     if not within_root:
-        return {
-            "ok": False, "exists": exists, "is_dir": is_dir,
-            "within_root": False, "normalized": normalized,
-            "message": "source_path must be under SOURCE_LOANS_ROOT",
-        }
+        return {"ok": False, "source_path": raw, "resolved_path": None, "reason": "outside_source_root", "mtime_utc": None}
+    resolved_path = str(p)
+    try:
+        exists = p.exists()
+        is_dir = p.is_dir()
+    except OSError:
+        return {"ok": False, "source_path": raw, "resolved_path": resolved_path, "reason": "not_found", "mtime_utc": None}
     if not exists:
-        return {
-            "ok": False, "exists": False, "is_dir": False,
-            "within_root": True, "normalized": normalized,
-            "message": "source_path not found",
-        }
+        return {"ok": False, "source_path": raw, "resolved_path": resolved_path, "reason": "not_found", "mtime_utc": None}
     if not is_dir:
-        return {
-            "ok": False, "exists": True, "is_dir": False,
-            "within_root": True, "normalized": normalized,
-            "message": "source_path is not a directory",
-        }
-    return {
-        "ok": True, "exists": True, "is_dir": True,
-        "within_root": True, "normalized": normalized,
-        "message": "ok",
-    }
+        return {"ok": False, "source_path": raw, "resolved_path": resolved_path, "reason": "not_a_directory", "mtime_utc": None}
+    try:
+        mtime_utc = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except OSError:
+        mtime_utc = None
+    return {"ok": True, "source_path": raw, "resolved_path": resolved_path, "reason": None, "mtime_utc": mtime_utc}
 
 
 @app.post("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/query_jobs", status_code=202)
