@@ -42,10 +42,9 @@ def test_validate_valid_path(client, tmp_root):
     assert r.status_code == 200
     d = r.json()
     assert d["ok"] is True
-    assert d["exists"] is True
-    assert d["is_dir"] is True
-    assert d["within_root"] is True
-    assert d["normalized"] == path
+    assert d["reason"] is None
+    assert d["resolved_path"] is not None
+    assert d["mtime_utc"] is not None
 
 
 def test_validate_nonexistent_path(client, tmp_root):
@@ -57,7 +56,7 @@ def test_validate_nonexistent_path(client, tmp_root):
     assert r.status_code == 200
     d = r.json()
     assert d["ok"] is False
-    assert d["exists"] is False
+    assert d["reason"] == "not_found"
 
 
 def test_validate_outside_root(client):
@@ -68,7 +67,7 @@ def test_validate_outside_root(client):
     assert r.status_code == 200
     d = r.json()
     assert d["ok"] is False
-    assert d["within_root"] is False
+    assert d["reason"] == "outside_source_root"
 
 
 def test_validate_empty_path(client):
@@ -79,7 +78,7 @@ def test_validate_empty_path(client):
     assert r.status_code == 200
     d = r.json()
     assert d["ok"] is False
-    assert "required" in d["message"].lower()
+    assert d["reason"] == "empty_source_path"
 
 
 def test_validate_null_path(client):
