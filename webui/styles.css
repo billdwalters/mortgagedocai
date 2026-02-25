@@ -2,6 +2,7 @@
 
 :root {
   --bg: #1a1a1e;
+  --bg-alt: #1e1e1e;
   --surface: #25252c;
   --text: #e4e4e7;
   --muted: #a1a1aa;
@@ -542,3 +543,21 @@ body {
 .source-validation-ok   { color: var(--success); }
 .source-validation-error { color: var(--error); }
 .source-validation-warn  { color: var(--warn); }
+
+/* ——— Query job error panel ——— */
+.chat-msg-error {
+  border-left: 3px solid var(--error);
+  background: transparent;
+}
+.chat-msg-error pre {
+  background: var(--bg-alt, #1e1e1e);
+  color: var(--text, #ccc);
+  font-size: 0.75rem;
+  padding: 0.5rem;
+  border-radius: 4px;
+  max-height: 12rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0.25rem 0 0;
+}

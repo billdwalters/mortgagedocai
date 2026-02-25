@@ -732,6 +732,57 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
+    function appendErrorPanel(job) {
+      if (!messagesEl) return;
+      var div = document.createElement("div");
+      div.className = "chat-msg chat-msg-error";
+      var inner = document.createElement("div");
+      inner.className = "chat-msg-content";
+      if (!job) {
+        var noInfo = document.createElement("p");
+        noInfo.textContent = "Job failed \u2014 no details available.";
+        inner.appendChild(noInfo);
+      } else {
+        var statusLine = "Status: " + (job.status || "UNKNOWN");
+        var phases = parsePhaseLines(job.stdout || "");
+        var lastPhase = phases.length ? phases[phases.length - 1] : null;
+        if (lastPhase) {
+          statusLine += "\u2003Last phase: " + lastPhase.name + "  " + lastPhase.ts;
+        }
+        var header = document.createElement("p");
+        header.textContent = statusLine;
+        inner.appendChild(header);
+        if (job.error) {
+          var errorEl = document.createElement("p");
+          errorEl.textContent = job.error;
+          inner.appendChild(errorEl);
+        }
+        if (job.stderr) {
+          var stderrLabel = document.createElement("p");
+          stderrLabel.textContent = "stderr";
+          inner.appendChild(stderrLabel);
+          var stderrPre = document.createElement("pre");
+          stderrPre.textContent = job.stderr;
+          inner.appendChild(stderrPre);
+        }
+        if (job.stdout) {
+          var stdoutLines = job.stdout.split("\n");
+          var last200 = stdoutLines.slice(-200).join("\n");
+          var details = document.createElement("details");
+          var summary = document.createElement("summary");
+          summary.textContent = "stdout (last " + Math.min(stdoutLines.length, 200) + " lines)";
+          details.appendChild(summary);
+          var stdoutPre = document.createElement("pre");
+          stdoutPre.textContent = last200;
+          details.appendChild(stdoutPre);
+          inner.appendChild(details);
+        }
+      }
+      div.appendChild(inner);
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
     async function getLatestSuccessRunId() {
       if (!selectedLoanId) return null;
       const cached = lastProcessedCache[selectedLoanId];
