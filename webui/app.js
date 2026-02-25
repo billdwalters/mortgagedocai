@@ -160,6 +160,7 @@
           if (key) localStorage.setItem(STORAGE_API_KEY, key);
           if (tenant) localStorage.setItem(STORAGE_TENANT, tenant);
           setConnectionIndicator(lastHealthStatus);
+          loadOllamaModels();
         } catch (_) {}
       });
     }
@@ -296,11 +297,20 @@
   let currentJobId = null;
   /** After refresh: loan_id -> source_loans item (source_path, last_processed_utc, etc.) */
   let sourceLoanItemsByLoanId = {};
+  let refreshLoansInFlight = false;
 
   // ——— Loans list (source-of-truth from GET /tenants/{tenant}/source_loans) ———
   async function refreshLoans() {
+    if (refreshLoansInFlight) return;
+    refreshLoansInFlight = true;
+    const btn = el("refresh-loans");
+    if (btn) { btn.disabled = true; btn.textContent = "Refreshing\u2026"; }
     const listEl = el("loan-list");
-    if (!listEl) return;
+    if (!listEl) {
+      refreshLoansInFlight = false;
+      if (btn) { btn.disabled = false; btn.textContent = "Refresh Loans"; }
+      return;
+    }
     listEl.innerHTML = "";
     selectedLoanId = null;
     selectedRunId = null;
@@ -343,6 +353,9 @@
       li.className = "loan-item error";
       li.textContent = "Error: " + (e.message || e);
       listEl.appendChild(li);
+    } finally {
+      refreshLoansInFlight = false;
+      if (btn) { btn.disabled = false; btn.textContent = "Refresh Loans"; }
     }
   }
 
