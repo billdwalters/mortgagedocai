@@ -561,3 +561,27 @@ body {
   word-break: break-all;
   margin: 0.25rem 0 0;
 }
+
+/* ——— Poll disconnect / stale warning banner ——— */
+.warning {
+  border-left: 3px solid var(--warn);
+  background: transparent;
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+.warning.hidden { display: none; }
+.warning p { margin: 0 0 0.35rem; }
+.warning button {
+  display: inline-block;
+  margin-top: 0.35rem;
+  padding: 0.25rem 0.75rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+.warning button:hover { opacity: 0.85; }
