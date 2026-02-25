@@ -1,7 +1,7 @@
 [Unit]
 Description=MortgageDocAI FastAPI Service
-After=network-online.target docker.service qdrant.service ollama.service
-Wants=network-online.target qdrant.service ollama.service
+After=network-online.target tailscaled.service docker.service qdrant.service ollama.service
+Wants=network-online.target tailscaled.service qdrant.service ollama.service
 
 [Service]
 Type=simple
@@ -23,6 +23,8 @@ Environment="HF_HUB_DISABLE_PROGRESS_BARS=1"
 Environment="TRANSFORMERS_VERBOSITY=error"
 Environment="TQDM_MININTERVAL=999999"
 
+# IMPORTANT: bootstrap_mortgagedocai.sh patches --host to the Tailscale IPv4 address
+# detected at install time. Do NOT change to 0.0.0.0 or 127.0.0.1 in production.
 ExecStart=/opt/mortgagedocai/venv/bin/python3 scripts/loan_api.py --host 127.0.0.1 --port 8000
 
 Restart=always
