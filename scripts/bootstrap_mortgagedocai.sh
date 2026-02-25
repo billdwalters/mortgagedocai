@@ -70,7 +70,15 @@ source "${VENV_DIR}/bin/activate"
 python -m pip install -U pip
 pip install -r "${SCRIPTS_DIR}/requirements.txt"
 
-# ── Caddy reverse proxy ───────────────────────────────────────────────────────
+# ── Caddy reverse proxy (optional — disabled by default in Tailscale-direct model) ────
+# In the current network security architecture, Tailscale (WireGuard-based)
+# provides encrypted transport; Caddy HTTPS-over-loopback is NOT required.
+# Set INSTALL_CADDY=true to re-enable (e.g. for LAN HTTPS fallback).
+INSTALL_CADDY="${INSTALL_CADDY:-false}"
+if [[ "${INSTALL_CADDY}" != "true" ]]; then
+  say "Skipping Caddy (INSTALL_CADDY=${INSTALL_CADDY}). Tailscale provides transport encryption."
+else
+
 say "Installing Caddy (stable) from official apt repository"
 CADDY_KEYRING=/usr/share/keyrings/caddy-stable-archive-keyring.gpg
 CADDY_SOURCES=/etc/apt/sources.list.d/caddy-stable.list
@@ -103,6 +111,8 @@ sudo systemctl restart caddy
 say "Installing Caddy internal CA root certificate (for browser trust)"
 sudo caddy trust || warn "caddy trust failed — you may need to import the CA manually"
 
+fi  # INSTALL_CADDY
+
 # ── systemd service units ─────────────────────────────────────────────────────
 say "Installing systemd service units"
 for svc in mortgagedocai-api.service mortgagedocai-job-worker.service; do
@@ -116,6 +126,22 @@ for svc in mortgagedocai-api.service mortgagedocai-job-worker.service; do
 done
 
 sudo systemctl daemon-reload
+
+# Detect Tailscale IPv4 and patch the API service bind address
+TS_IP="$(tailscale ip -4 2>/dev/null || true)"
+if [[ -n "${TS_IP}" ]]; then
+  say "Tailscale IP detected: ${TS_IP} — patching mortgagedocai-api.service to bind to Tailscale interface"
+  sudo sed -i "s|--host 127\.0\.0\.1|--host ${TS_IP}|g" \
+      /etc/systemd/system/mortgagedocai-api.service
+  sudo systemctl daemon-reload
+else
+  warn "Tailscale not yet connected — service will bind to 127.0.0.1 (loopback fallback)."
+  warn "After 'tailscale up', run:"
+  warn "  TS_IP=\$(tailscale ip -4)"
+  warn "  sudo sed -i \"s|--host 127\\.0\\.0\\.1|--host \${TS_IP}|g\" /etc/systemd/system/mortgagedocai-api.service"
+  warn "  sudo systemctl daemon-reload && sudo systemctl restart mortgagedocai-api"
+fi
+
 sudo systemctl enable mortgagedocai-api.service mortgagedocai-job-worker.service
 sudo systemctl start mortgagedocai-api.service mortgagedocai-job-worker.service || \
     warn "Service start failed — check 'journalctl -u mortgagedocai-api' for details"
@@ -123,12 +149,25 @@ sudo systemctl start mortgagedocai-api.service mortgagedocai-job-worker.service 
 # ── Tailscale ─────────────────────────────────────────────────────────────────
 say "Installing Tailscale"
 if ! command -v tailscale >/dev/null 2>&1; then
-    curl -fsSL https://tailscale.com/install.sh | sh
-    warn "Tailscale installed but NOT connected."
-    warn "Run: sudo tailscale up"
-    warn "Then authenticate via the URL shown."
+  curl -fsSL https://tailscale.com/install.sh | sh
 else
-    say "Tailscale already installed: $(tailscale version 2>/dev/null || echo 'version unknown')"
+  say "Tailscale already installed: $(tailscale version 2>/dev/null || echo 'version unknown')"
+fi
+
+say "Enabling and starting tailscaled daemon"
+sudo systemctl enable tailscaled || true
+sudo systemctl start tailscaled || true
+
+# Tailscale join is intentionally manual (requires interactive browser auth).
+# Tag the server as tag:mortgagedocai so ACL policy allows port 8000 access.
+# After this script completes, run:
+#   sudo tailscale up --advertise-tags=tag:mortgagedocai
+# Then re-run the Tailscale IP patch from the systemd section above (or re-run this script).
+if ! tailscale status --json 2>/dev/null | grep -q '"BackendState":"Running"'; then
+  warn "Tailscale daemon is running but device is NOT authenticated to the tailnet."
+  warn "Run: sudo tailscale up --advertise-tags=tag:mortgagedocai"
+  warn "Then authenticate via the URL shown."
+  warn "Afterwards run: sudo systemctl restart mortgagedocai-api"
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
@@ -138,11 +177,11 @@ echo "Scripts:    ${SCRIPTS_DIR}"
 echo "Venv:       ${VENV_DIR}"
 echo ""
 echo "Service status:"
-systemctl is-active caddy mortgagedocai-api mortgagedocai-job-worker 2>/dev/null || true
+systemctl is-active mortgagedocai-api mortgagedocai-job-worker 2>/dev/null || true
 echo ""
 echo "Next steps (if not already done):"
 echo "  1. Verify NFS mounts: /mnt/source_loans, /mnt/nas_apps/nas_*"
 echo "  2. Start Qdrant:  docker compose up -d  (from ${REPO_ROOT})"
 echo "  3. Start Ollama:  sudo systemctl start ollama"
 echo "  4. Connect Tailscale: sudo tailscale up"
-echo "  5. Verify HTTPS:  curl -sk --resolve mortgagedocai.local:443:127.0.0.1 https://mortgagedocai.local/health"
+echo "  5. Verify access: curl -s http://\$(tailscale ip -4 2>/dev/null):8000/health"
