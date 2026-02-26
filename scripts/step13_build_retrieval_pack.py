@@ -76,9 +76,13 @@ def parse_args(argv=None) -> argparse.Namespace:
 def _sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
-def _ingest_jsonl_file(path: Path, idx: Dict[str, Dict[str, Any]]) -> int:
-    """Parse a chunks.jsonl file, add entries to *idx*, return count added."""
+def _ingest_jsonl_file(path: Path, idx: Dict[str, Dict[str, Any]]) -> Tuple[int, int]:
+    """Parse a chunks.jsonl file, add NEW entries to *idx*; return (added, dupes).
+
+    First occurrence of each chunk_id wins; later duplicates are counted but skipped.
+    """
     added = 0
+    dupes = 0
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         if not line.strip():
             continue
@@ -89,6 +93,9 @@ def _ingest_jsonl_file(path: Path, idx: Dict[str, Dict[str, Any]]) -> int:
         cid = obj.get("chunk_id")
         if not cid:
             continue
+        if cid in idx:
+            dupes += 1
+            continue  # keep first occurrence; later duplicates are ignored
         txt = obj.get("text", "")
         idx[cid] = {
             "chunk_id": cid,
@@ -101,7 +108,7 @@ def _ingest_jsonl_file(path: Path, idx: Dict[str, Dict[str, Any]]) -> int:
             "text_norm_sha256": _sha256_hex(normalize_chunk_text(txt)),
         }
         added += 1
-    return added
+    return added, dupes
 
 
 def _load_chunk_text_index(run_dir: Path) -> Dict[str, Dict[str, Any]]:
