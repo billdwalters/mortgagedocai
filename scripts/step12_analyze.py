@@ -307,6 +307,30 @@ def _normalize_uw_conditions(llm_obj: Dict[str, Any], allowed_chunk_ids: set,
     }
 
 
+# ---------------------------------------------------------------------------
+# uw_conditions deduplication helpers
+# ---------------------------------------------------------------------------
+
+# Longer phrases before shorter prefixes so they match first.
+_UW_DEDUPE_BOILERPLATE = [
+    "please provide", "please submit", "please upload", "please send",
+    "provide", "submit", "upload", "send",
+]
+
+
+def _make_dedupe_key(description: str) -> str:
+    """Normalise a condition description to a stable deduplication key."""
+    key = description.lower()
+    key = re.sub(r"[^\w\s]", " ", key)       # punctuation -> space
+    key = re.sub(r"\s+", " ", key).strip()    # collapse whitespace
+    for verb in _UW_DEDUPE_BOILERPLATE:
+        if key.startswith(verb + " "):
+            key = key[len(verb) + 1:]
+            break
+    key = key.rstrip(".")                     # trailing period safety net
+    return key.strip()
+
+
 _INCOME_FREQUENCIES_CANONICAL = {"monthly", "annual", "one-time", "unknown"}
 
 # ---------------------------------------------------------------------------
