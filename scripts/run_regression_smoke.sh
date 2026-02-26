@@ -341,6 +341,13 @@ sys.exit(0)
         fi
     fi
 
+    # Verify per-profile version.json
+    if [ ! -f "${UW_ROOT}/version.json" ]; then
+        fail "uw_conditions: version.json not found at ${UW_ROOT}/version.json"
+    else
+        echo "  uw_conditions: version.json found"
+    fi
+
     echo "=== Integrity: uw_conditions chunk_id ∈ retrieval_pack ==="
     if [ -f "$UW_CONDITIONS_JSON" ]; then
         UW_INTEGRITY=$(python3 -c "
@@ -556,6 +563,13 @@ sys.exit(0)
         else
             echo "  ${PITIA_EVIDENCE_CHECK}"
         fi
+    fi
+
+    # Verify per-profile version.json
+    if [ ! -f "${INCOME_ROOT}/version.json" ]; then
+        fail "income_analysis: version.json not found at ${INCOME_ROOT}/version.json"
+    else
+        echo "  income_analysis: version.json found"
     fi
 
     echo "=== Integrity: income_analysis chunk_id ∈ retrieval_pack ==="
