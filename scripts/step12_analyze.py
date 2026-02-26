@@ -341,6 +341,128 @@ def _token_jaccard(a: str, b: str) -> float:
     return len(set_a & set_b) / len(union)
 
 
+def _dedup_conditions(conditions: List[Dict]) -> "tuple[List[Dict], Dict]":
+    """Deduplicate uw_conditions deterministically via Union-Find + token Jaccard.
+
+    Groups conditions with identical dedupe_key OR _token_jaccard >= 0.92.
+    Union-Find root is always the lowest original index (first encountered).
+    Output sorted by (category, timing, description).
+    Returns (deduped_list, stats_dict).
+    """
+    n = len(conditions)
+    if n == 0:
+        return [], {"raw_count": 0, "deduped_count": 0, "removed_count": 0, "top_dup_keys": []}
+
+    parent = list(range(n))
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]    # path halving -- deterministic
+            x = parent[x]
+        return x
+
+    def _union(x: int, y: int) -> None:
+        rx, ry = _find(x), _find(y)
+        if rx != ry:
+            if rx < ry:
+                parent[ry] = rx             # lower index always becomes root
+            else:
+                parent[rx] = ry
+
+    keys = [_make_dedupe_key(c.get("description", "")) for c in conditions]
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _find(i) == _find(j):
+                continue
+            if keys[i] == keys[j] or _token_jaccard(keys[i], keys[j]) >= 0.92:
+                _union(i, j)
+
+    groups: Dict[int, List[int]] = {}
+    for i in range(n):
+        root = _find(i)
+        groups.setdefault(root, []).append(i)
+
+    merged: List[Dict] = []
+
+    for root in sorted(groups.keys()):
+        members = groups[root]
+
+        if len(members) == 1:
+            merged.append(conditions[members[0]])
+            continue
+
+        # Winner: longest description after boilerplate strip; first-index tie-break
+        winner_idx = members[0]
+        for idx in members[1:]:
+            if len(_make_dedupe_key(conditions[idx].get("description", ""))) > \
+               len(_make_dedupe_key(conditions[winner_idx].get("description", ""))):
+                winner_idx = idx
+        winner = conditions[winner_idx]
+
+        # Citations: union by chunk_id; prefer non-empty quote
+        merged_cits: Dict[str, str] = {}
+        for idx in members:
+            for cit in conditions[idx].get("citations", []) or []:
+                cid = cit.get("chunk_id", "")
+                if not cid:
+                    continue
+                quote = cit.get("quote", "") or ""
+                if cid not in merged_cits:
+                    merged_cits[cid] = quote
+                elif not merged_cits[cid] and quote:
+                    merged_cits[cid] = quote
+        citations_out = [{"chunk_id": cid, "quote": q} for cid, q in merged_cits.items()]
+
+        # Category: most frequent; first-encountered tie-break
+        cat_order: List[str] = []
+        cat_counter: Counter = Counter()
+        for idx in members:
+            cat = conditions[idx].get("category", "Other")
+            cat_counter[cat] += 1
+            if cat not in cat_order:
+                cat_order.append(cat)
+        best = max(cat_counter.values())
+        category = next(c for c in cat_order if cat_counter[c] == best)
+
+        # Timing: most frequent; first-encountered tie-break
+        tim_order: List[str] = []
+        tim_counter: Counter = Counter()
+        for idx in members:
+            tim = conditions[idx].get("timing", "Unknown")
+            tim_counter[tim] += 1
+            if tim not in tim_order:
+                tim_order.append(tim)
+        best_t = max(tim_counter.values())
+        timing = next(t for t in tim_order if tim_counter[t] == best_t)
+
+        merged.append({
+            "description": winner.get("description", ""),
+            "category": category,
+            "timing": timing,
+            "citations": citations_out,
+            "source": winner.get("source", {"documents": []}),
+        })
+
+    merged.sort(key=lambda c: (
+        c.get("category", ""), c.get("timing", ""), c.get("description", "")
+    ))
+
+    raw_count = n
+    deduped_count = len(merged)
+    removed_count = raw_count - deduped_count
+    dup_groups = sorted(
+        [(len(m), keys[r]) for r, m in groups.items() if len(m) >= 2],
+        key=lambda x: -x[0]
+    )
+    return merged, {
+        "raw_count": raw_count,
+        "deduped_count": deduped_count,
+        "removed_count": removed_count,
+        "top_dup_keys": [dk for _, dk in dup_groups[:5]],
+    }
+
+
 _INCOME_FREQUENCIES_CANONICAL = {"monthly", "annual", "one-time", "unknown"}
 
 # ---------------------------------------------------------------------------
