@@ -234,7 +234,7 @@ def main(argv=None) -> None:
 
     run_id = args.run_id
     run_dir = NAS_CHUNK / "tenants" / tenant_id / "loans" / loan_id / run_id
-    chunk_index = _load_chunk_text_index(run_dir)
+    chunk_index = _load_chunk_text_index(run_dir, strict=args.strict)
 
     # --- Offline env vars MUST be set before importing sentence_transformers / torch ---
     if args.offline_embeddings:
