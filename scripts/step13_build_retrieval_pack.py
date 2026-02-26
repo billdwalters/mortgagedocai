@@ -111,7 +111,7 @@ def _ingest_jsonl_file(path: Path, idx: Dict[str, Dict[str, Any]]) -> Tuple[int,
     return added, dupes
 
 
-def _load_chunk_text_index(run_dir: Path) -> Dict[str, Dict[str, Any]]:
+def _load_chunk_text_index(run_dir: Path, strict: bool = False) -> Dict[str, Dict[str, Any]]:
     chunks_root = run_dir / "chunks"
     if not chunks_root.exists():
         raise ContractError(f"Missing chunks directory: {chunks_root}")
@@ -119,17 +119,26 @@ def _load_chunk_text_index(run_dir: Path) -> Dict[str, Dict[str, Any]]:
     idx: Dict[str, Dict[str, Any]] = {}
 
     # Strategy 1: chunks/<document_id>/chunks.jsonl  (Step11 canonical layout)
-    for doc_dir in sorted([d for d in chunks_root.iterdir() if d.is_dir()]):
-        jsonl = doc_dir / "chunks.jsonl"
-        if jsonl.exists():
-            _ingest_jsonl_file(jsonl, idx)
+    # Use glob("*/chunks.jsonl") — reliable on SMB/NAS mounts where is_dir() can misreport.
+    jsonl_files = sorted(chunks_root.glob("*/chunks.jsonl"))
+    _dprint(f"[DEBUG] Step13: discovered {len(jsonl_files)} chunks.jsonl files under {chunks_root}")
+    for jsonl in jsonl_files:
+        try:
+            added, dupes = _ingest_jsonl_file(jsonl, idx)
+            _dprint(f"[DEBUG] Step13: {jsonl.parent.name}/chunks.jsonl → added={added} dupes={dupes} total={len(idx)}")
+        except OSError as exc:
+            if strict:
+                raise ContractError(f"Step13 strict: cannot read {jsonl}: {exc}") from exc
+            _dprint(f"[WARN]  Step13: skipping unreadable {jsonl}: {exc}")
 
     if idx:
+        _dprint(f"[DEBUG] Step13: chunk_index ready — {len(idx)} entries (Strategy 1)")
         return idx
 
     # Strategy 2: chunks.jsonl files directly under chunks/
     for f in sorted(chunks_root.glob("*.jsonl")):
-        _ingest_jsonl_file(f, idx)
+        added, dupes = _ingest_jsonl_file(f, idx)
+        _dprint(f"[DEBUG] Step13: {f.name} → added={added} dupes={dupes} total={len(idx)}")
 
     if idx:
         return idx
