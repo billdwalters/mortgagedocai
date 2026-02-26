@@ -1939,6 +1939,78 @@ def _build_version_info(policy: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Step12 unified version blob (all profiles)
+# ---------------------------------------------------------------------------
+
+# Schema version — bump when the output JSON shape for that profile changes.
+_SCHEMA_VERSIONS: Dict[str, str] = {
+    "uw_decision":    "v0.7",
+    "uw_conditions":  "v1",
+    "income_analysis": "v1",
+    "default":        "v1",
+}
+
+
+def _build_version_blob(
+    args: "argparse.Namespace",
+    ctx_run_id: str,
+    schemas: Dict[str, str],
+    rp_path: Optional[Path],
+    rp_sha256: Optional[str],
+    rp_source: str,
+) -> Dict[str, Any]:
+    """Build the unified version/audit blob written to every Step12 profile output.
+
+    Mirrors _build_version_info git pattern; fails gracefully on git errors.
+    Note: offline_embeddings is a step13 argument and is intentionally absent.
+    """
+    git_commit = None
+    git_dirty = None
+    try:
+        r = subprocess.run(
+            ["git", "-C", "/opt/mortgagedocai", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            git_commit = r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        r = subprocess.run(
+            ["git", "-C", "/opt/mortgagedocai", "status", "--porcelain"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            git_dirty = bool(r.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {
+        "generated_at_utc": datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+        "git": {"commit": git_commit, "dirty": git_dirty},
+        "run": {
+            "tenant_id": getattr(args, "tenant_id", None),
+            "loan_id": getattr(args, "loan_id", None),
+            "run_id": ctx_run_id,
+        },
+        "options": {
+            "llm_model": getattr(args, "llm_model", None),
+            "llm_temperature": getattr(args, "llm_temperature", None),
+            "llm_max_tokens": getattr(args, "llm_max_tokens", None),
+            "evidence_max_chars": getattr(args, "evidence_max_chars", None),
+            "ollama_url": getattr(args, "ollama_url", None),
+        },
+        "retrieval_pack": {
+            "path": str(rp_path) if rp_path else None,
+            "sha256": rp_sha256,
+            "source": rp_source,
+        },
+        "schemas": schemas,
+    }
+
+
 def _build_uw_decision(
     income_analysis: Dict[str, Any],
     dti: Dict[str, Any],
