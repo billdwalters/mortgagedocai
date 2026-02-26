@@ -49,6 +49,16 @@ OLLAMA_PORT=11434
 _SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="${SOURCE_DIR:-${_SELF_DIR}}"
 
+# PY_SOURCE: directory containing Python scripts, loan_service/, webui/.
+# When SOURCE_DIR is the repo root (contains a scripts/ subdirectory with loan_service/),
+# deploy from SOURCE_DIR/scripts/ instead of SOURCE_DIR directly.
+if [[ -d "${SOURCE_DIR}/scripts" && \
+      ( -d "${SOURCE_DIR}/scripts/loan_service" || -f "${SOURCE_DIR}/scripts/loan_api.py" ) ]]; then
+  PY_SOURCE="${SOURCE_DIR}/scripts"
+else
+  PY_SOURCE="${SOURCE_DIR}"
+fi
+
 # Repo service root (where *.service files and infra/ live):
 # If running from scripts/, go one level up; otherwise SOURCE_DIR is already repo root.
 if [[ "$(basename "${SOURCE_DIR}")" == "scripts" ]]; then
@@ -143,6 +153,19 @@ cmd_verify() {
     fail "qdrant container: not running  →  cd ${REPO_ROOT} && docker compose up -d"
   fi
 
+  # ── 1b. Systemd unit file validation ─────────────────────────────────────────
+  say "Systemd unit validation  (systemd-analyze verify)"
+  for svc in mortgagedocai-api.service mortgagedocai-job-worker.service; do
+    _svc_path="/etc/systemd/system/${svc}"
+    if [[ ! -f "${_svc_path}" ]]; then
+      fail "Unit file missing: ${_svc_path}"
+    elif _analyze_err="$(systemd-analyze verify "${_svc_path}" 2>&1)"; then
+      ok "${svc}: unit file valid"
+    else
+      fail "${svc}: systemd-analyze verify — ${_analyze_err}"
+    fi
+  done
+
   # ── 2. Port 8000 ─────────────────────────────────────────────────────────────
   say "Port ${API_PORT}  (ss -ltnp)"
   ss_out="$(ss -ltnp 2>/dev/null | grep ":${API_PORT} " || true)"
@@ -203,13 +226,19 @@ cmd_verify() {
     fi
   done
 
-  # source_loans contract: must be read-only
+  # source_loans contract: must be CIFS and read-only (data-integrity requirement)
   if findmnt -n /mnt/source_loans >/dev/null 2>&1; then
-    SOPTS="$(findmnt -no OPTIONS /mnt/source_loans 2>/dev/null || true)"
-    if echo "${SOPTS}" | tr ',' '\n' | grep -qx "ro"; then
+    _src_fstype="$(findmnt -no FSTYPE /mnt/source_loans 2>/dev/null || true)"
+    _src_opts="$(findmnt -no OPTIONS /mnt/source_loans 2>/dev/null || true)"
+    if [[ "${_src_fstype}" == "cifs" ]]; then
+      ok "/mnt/source_loans: FSTYPE=cifs  ✓"
+    else
+      fail "/mnt/source_loans: FSTYPE='${_src_fstype}' expected 'cifs'"
+    fi
+    if echo "${_src_opts}" | tr ',' '\n' | grep -qx "ro"; then
       ok "/mnt/source_loans: read-only  ✓  (contract requirement met)"
     else
-      warn "/mnt/source_loans: NOT mounted read-only — OPTIONS=${SOPTS}"
+      fail "/mnt/source_loans: NOT mounted read-only — OPTIONS=${_src_opts}"
     fi
   fi
 
@@ -233,6 +262,21 @@ cmd_verify() {
     ok "GET /api/tags  →  HTTP ${OLL_CODE}  (${MODEL_COUNT} model(s) loaded)"
   else
     fail "GET /api/tags  →  HTTP ${OLL_CODE}  →  sudo systemctl start ollama"
+  fi
+
+  # ── 6b. Worker heartbeat ──────────────────────────────────────────────────────
+  say "Worker heartbeat"
+  _hb=/mnt/nas_apps/nas_analyze/_meta/worker_heartbeat.json
+  if [[ ! -f "${_hb}" ]]; then
+    fail "Worker heartbeat missing: ${_hb}"
+  else
+    _hb_mtime="$(stat -c %Y "${_hb}" 2>/dev/null || echo 0)"
+    _hb_age=$(( $(date +%s) - _hb_mtime ))
+    if [[ "${_hb_age}" -gt 300 ]]; then
+      fail "Worker heartbeat stale: ${_hb} is ${_hb_age}s old (threshold: 300s)"
+    else
+      ok "Worker heartbeat fresh: ${_hb} is ${_hb_age}s old"
+    fi
   fi
 
   # ── Summary ──────────────────────────────────────────────────────────────────
@@ -304,11 +348,11 @@ cmd_install() {
   sudo mkdir -p /mnt/nas_apps/nas_analyze/_staging
 
   # ── 4. Deploy scripts and modules ───────────────────────────────────────────
-  say "Scripts  (SOURCE_DIR=${SOURCE_DIR})"
+  say "Scripts  (PY_SOURCE=${PY_SOURCE})"
 
   # Python scripts (top-level *.py)
   py_count=0
-  for f in "${SOURCE_DIR}"/*.py; do
+  for f in "${PY_SOURCE}"/*.py; do
     [[ -f "${f}" ]] || continue
     cp -f "${f}" "${SCRIPTS_DIR}/"
     chmod +x "${SCRIPTS_DIR}/$(basename "${f}")" || true
@@ -317,30 +361,30 @@ cmd_install() {
   echo "  [OK] ${py_count} Python scripts deployed"
 
   # loan_service module — required for job orchestration (job_worker, adapters_disk, etc.)
-  if [[ -d "${SOURCE_DIR}/loan_service" ]]; then
-    cp -rf "${SOURCE_DIR}/loan_service" "${SCRIPTS_DIR}/loan_service"
+  if [[ -d "${PY_SOURCE}/loan_service" ]]; then
+    cp -rf "${PY_SOURCE}/loan_service" "${SCRIPTS_DIR}/loan_service"
     # a+rX: ensure all files are readable; capital X sets +x on dirs (for traversal)
     # and on files already executable — does NOT chmod +x regular Python modules
     chmod -R a+rX "${SCRIPTS_DIR}/loan_service"
     echo "  [OK] loan_service module deployed"
   else
-    warn "loan_service/ not found at ${SOURCE_DIR}/loan_service — job orchestration will fail"
+    warn "loan_service/ not found at ${PY_SOURCE}/loan_service — job orchestration will fail"
   fi
 
   # requirements.txt
-  if [[ -f "${SOURCE_DIR}/requirements.txt" ]]; then
-    cp -f "${SOURCE_DIR}/requirements.txt" "${SCRIPTS_DIR}/requirements.txt"
+  if [[ -f "${PY_SOURCE}/requirements.txt" ]]; then
+    cp -f "${PY_SOURCE}/requirements.txt" "${SCRIPTS_DIR}/requirements.txt"
     echo "  [OK] requirements.txt deployed"
   else
-    warn "requirements.txt not found at ${SOURCE_DIR}/requirements.txt"
+    warn "requirements.txt not found at ${PY_SOURCE}/requirements.txt"
   fi
 
   # webui (served at /ui/static by loan_api.py)
-  if [[ -d "${SOURCE_DIR}/webui" ]]; then
-    cp -rf "${SOURCE_DIR}/webui" "${SCRIPTS_DIR}/webui"
+  if [[ -d "${PY_SOURCE}/webui" ]]; then
+    cp -rf "${PY_SOURCE}/webui" "${SCRIPTS_DIR}/webui"
     echo "  [OK] webui deployed"
   else
-    warn "webui/ not found at ${SOURCE_DIR}/webui — UI will be unavailable"
+    warn "webui/ not found at ${PY_SOURCE}/webui — UI will be unavailable"
   fi
 
   # ── 5. Python venv ───────────────────────────────────────────────────────────
