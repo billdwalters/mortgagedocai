@@ -2734,6 +2734,19 @@ def main(argv=None) -> None:
         is_income = (profile == "income_analysis")
         is_uw_decision = (profile == "uw_decision")
 
+        # ── Per-profile version.json + run-level outputs/_meta/version.json ──────
+        # Written for EVERY profile (uw_conditions, income_analysis, uw_decision,
+        # default). The old per-profile writes inside the if-blocks below are removed.
+        _ver_blob = _build_version_blob(
+            args, ctx.run_id, _SCHEMA_VERSIONS, rp_path, _rp_sha256, rp_source
+        )
+        _ver_prof_out = profiles_dir / profile
+        ensure_dir(_ver_prof_out)
+        atomic_write_json(_ver_prof_out / "version.json", _ver_blob)
+        _ver_meta_dir = out_dir / "_meta"
+        ensure_dir(_ver_meta_dir)
+        atomic_write_json(_ver_meta_dir / "version.json", _ver_blob)
+
         # --- uw_decision: purely deterministic, no LLM needed ---
         if is_uw_decision:
             policy = _load_uw_policy(args.tenant_id)
@@ -2793,18 +2806,6 @@ def main(argv=None) -> None:
             })
             atomic_write_text(prof_out / "citations.jsonl",
                               "\n".join(citations_lines) + ("\n" if citations_lines else ""))
-
-            # Write run-level version.json
-            version_meta_dir = out_dir / "_meta"
-            ensure_dir(version_meta_dir)
-            atomic_write_json(version_meta_dir / "version.json",
-                              _build_version_info(policy))
-
-            # Per-profile version.json with retrieval provenance
-            atomic_write_json(prof_out / "version.json", {
-                **_build_version_info(policy),
-                **_rp_provenance,
-            })
 
             run_meta.append({
                 "profile": profile,
@@ -3142,13 +3143,6 @@ def main(argv=None) -> None:
         if dti_result is not None:
             dti_result.update(_rp_provenance)
             atomic_write_json(prof_out / "dti.json", dti_result)
-
-        if is_income:
-            atomic_write_json(prof_out / "version.json", {
-                "generated_at_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "profile": "income_analysis",
-                **_rp_provenance,
-            })
 
         # Primary outputs (first query/profile) go to contracted filenames
         if idx == 0:
