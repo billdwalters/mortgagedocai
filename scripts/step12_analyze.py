@@ -315,6 +315,7 @@ def _normalize_uw_conditions(llm_obj: Dict[str, Any], allowed_chunk_ids: set,
 _UW_DEDUPE_BOILERPLATE = [
     "please provide", "please submit", "please upload", "please send",
     "provide", "submit", "upload", "send",
+    "obtain", "verify", "furnish",
 ]
 
 
@@ -461,6 +462,157 @@ def _dedup_conditions(conditions: List[Dict]) -> "tuple[List[Dict], Dict]":
         "removed_count": removed_count,
         "top_dup_keys": [dk for _, dk in dup_groups[:5]],
     }
+
+
+# ---------------------------------------------------------------------------
+# _postprocess_conditions — v2 dedup with fixed sort order + source merge
+# ---------------------------------------------------------------------------
+
+# Fixed priority for output ordering (lower index = earlier in output).
+_CATEGORY_ORDER: Dict[str, int] = {
+    "Verification": 0, "Assets": 1, "Income": 2, "Credit": 3,
+    "Property": 4, "Title": 5, "Insurance": 6, "Compliance": 7, "Other": 8,
+}
+
+_TIMING_ORDER: Dict[str, int] = {
+    "Prior to Docs": 0, "Prior to Closing": 1, "Post Closing": 2, "Unknown": 3,
+}
+
+
+def _postprocess_conditions(
+    conditions: List[Dict],
+    debug: bool = False,
+) -> List[Dict]:
+    """Deterministic dedup + normalisation of uw_conditions (replaces _dedup_conditions at call site).
+
+    Enhancements over _dedup_conditions:
+      - Fixed category/timing sort order (not alphabetical).
+      - source.documents merged across group members by (document_id, file_relpath, page_start, page_end).
+      - debug parameter: emits a single structured diagnostic line via _dprint when True.
+    Caller is responsible for confidence calibration using len(input) - len(output).
+    """
+    n = len(conditions)
+    if n == 0:
+        if debug:
+            _dprint("UW_COND_DEDUPE raw=0 merged=0 removed=0")
+        return []
+
+    parent = list(range(n))
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]    # path halving — deterministic
+            x = parent[x]
+        return x
+
+    def _union(x: int, y: int) -> None:
+        rx, ry = _find(x), _find(y)
+        if rx != ry:
+            if rx < ry:
+                parent[ry] = rx
+            else:
+                parent[rx] = ry
+
+    keys = [_make_dedupe_key(c.get("description", "")) for c in conditions]
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _find(i) == _find(j):
+                continue
+            if keys[i] == keys[j] or _token_jaccard(keys[i], keys[j]) >= 0.92:
+                _union(i, j)
+
+    groups: Dict[int, List[int]] = {}
+    for i in range(n):
+        root = _find(i)
+        groups.setdefault(root, []).append(i)
+
+    merged: List[Dict] = []
+
+    for root in sorted(groups.keys()):
+        members = groups[root]
+
+        if len(members) == 1:
+            merged.append(conditions[members[0]])
+            continue
+
+        # Description: longest dedupe key; first-index tie-break
+        winner_idx = members[0]
+        for idx in members[1:]:
+            if len(keys[idx]) > len(keys[winner_idx]):
+                winner_idx = idx
+
+        # Citations: union by chunk_id; prefer non-empty quote; stable by first appearance
+        merged_cits: Dict[str, str] = {}
+        for idx in members:
+            for cit in (conditions[idx].get("citations") or []):
+                cid = cit.get("chunk_id", "")
+                if not cid:
+                    continue
+                quote = cit.get("quote", "") or ""
+                if cid not in merged_cits:
+                    merged_cits[cid] = quote
+                elif not merged_cits[cid] and quote:
+                    merged_cits[cid] = quote
+        citations_out = [{"chunk_id": cid, "quote": q} for cid, q in merged_cits.items()]
+
+        # Category: majority vote; first-encountered tie-break
+        cat_order: List[str] = []
+        cat_counter: Counter = Counter()
+        for idx in members:
+            cat = conditions[idx].get("category", "Other")
+            cat_counter[cat] += 1
+            if cat not in cat_order:
+                cat_order.append(cat)
+        best_cat = max(cat_counter.values())
+        category = next(c for c in cat_order if cat_counter[c] == best_cat)
+
+        # Timing: majority vote; first-encountered tie-break
+        tim_order: List[str] = []
+        tim_counter: Counter = Counter()
+        for idx in members:
+            tim = conditions[idx].get("timing", "Unknown")
+            tim_counter[tim] += 1
+            if tim not in tim_order:
+                tim_order.append(tim)
+        best_tim = max(tim_counter.values())
+        timing = next(t for t in tim_order if tim_counter[t] == best_tim)
+
+        # source.documents: union by (document_id, file_relpath, page_start, page_end);
+        # stable ordering by first appearance across members.
+        doc_seen: Dict[tuple, Dict] = {}
+        for idx in members:
+            src = conditions[idx].get("source") or {}
+            for doc in (src.get("documents") or []):
+                key_tuple = (
+                    doc.get("document_id") or "",
+                    doc.get("file_relpath") or "",
+                    doc.get("page_start"),
+                    doc.get("page_end"),
+                )
+                if key_tuple not in doc_seen:
+                    doc_seen[key_tuple] = doc
+        docs_out = list(doc_seen.values())
+
+        merged.append({
+            "description": conditions[winner_idx].get("description", ""),
+            "category": category,
+            "timing": timing,
+            "citations": citations_out,
+            "source": {"documents": docs_out},
+        })
+
+    # Fixed sort: category priority, timing priority, description casefold
+    merged.sort(key=lambda c: (
+        _CATEGORY_ORDER.get(c.get("category", "Other"), 8),
+        _TIMING_ORDER.get(c.get("timing", "Unknown"), 3),
+        (c.get("description") or "").casefold(),
+    ))
+
+    if debug:
+        _dprint(f"UW_COND_DEDUPE raw={n} merged={len(merged)} removed={n - len(merged)}")
+
+    return merged
 
 
 _INCOME_FREQUENCIES_CANONICAL = {"monthly", "annual", "one-time", "unknown"}
