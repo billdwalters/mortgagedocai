@@ -2865,9 +2865,21 @@ def main(argv=None) -> None:
                     "page_end": p.get("page_end") or ch.get("page_end"),
                 }
             uw_result = _normalize_uw_conditions(llm_obj, allowed_chunk_ids, chunk_meta=chunk_meta)
+            # -- Deduplication + confidence calibration ---------------------------
+            _deduped_conds, _dedup_stats = _dedup_conditions(uw_result["conditions"])
+            _raw = _dedup_stats["raw_count"]
+            _removed = _dedup_stats["removed_count"]
+            if _raw > 0 and _removed / _raw > 0.30:
+                uw_result["confidence"] = max(0.3, uw_result["confidence"] - 0.1)
+            uw_result["conditions"] = _deduped_conds
             confidence = uw_result["confidence"]
-            _dprint(f"[DEBUG] uw_conditions: {len(uw_result['conditions'])} conditions, "
-                    f"confidence={confidence}")
+            _dprint(
+                f"[DEBUG] uw_conditions: raw={_dedup_stats['raw_count']} "
+                f"deduped={_dedup_stats['deduped_count']} "
+                f"removed={_dedup_stats['removed_count']} "
+                f"top_dup_keys={_dedup_stats['top_dup_keys']} "
+                f"confidence={confidence}"
+            )
 
         # --- income_analysis profile: normalize extraction + compute DTI ---
         income_result = None
