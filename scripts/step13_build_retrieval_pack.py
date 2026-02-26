@@ -187,6 +187,40 @@ def _load_chunk_text_index(run_dir: Path, strict: bool = False) -> Dict[str, Dic
         f"Directory listing (first 20): {contents}"
     )
 
+def _self_test() -> None:
+    """Smoke test: canonical chunks layout, first-wins dedup, two doc dirs."""
+    import shutil
+    import tempfile
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        # aaa/chunks.jsonl: c1="from_aaa"
+        # bbb/chunks.jsonl: c1="from_bbb" (dup → must lose), c2="from_bbb_c2"
+        for doc_name, entries in [
+            ("aaa", [("c1", "from_aaa")]),
+            ("bbb", [("c1", "from_bbb"), ("c2", "from_bbb_c2")]),
+        ]:
+            d = tmp / "chunks" / doc_name
+            d.mkdir(parents=True)
+            lines = "\n".join(
+                json.dumps({
+                    "chunk_id": cid, "text": text,
+                    "document_id": doc_name, "file_relpath": f"{doc_name}.pdf",
+                    "page_start": 1, "page_end": 2, "chunk_index": 0,
+                })
+                for cid, text in entries
+            ) + "\n"
+            (d / "chunks.jsonl").write_text(lines, encoding="utf-8")
+        idx = _load_chunk_text_index(tmp)
+        assert len(idx) == 2, \
+            f"Expected 2 unique chunk_ids, got {len(idx)}: {list(idx.keys())}"
+        assert idx["c1"]["text"] == "from_aaa", \
+            f"First-wins failed: c1.text={idx['c1']['text']!r} (expected 'from_aaa')"
+        assert idx["c2"]["text"] == "from_bbb_c2"
+        print("✓ Step13 _self_test passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main(argv=None) -> None:
     global _DEBUG
     args = parse_args(argv)
@@ -415,4 +449,8 @@ def main(argv=None) -> None:
     print(f"✓ Step13 wrote retrieval pack: {out_root / 'retrieval_pack.json'}")
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if "--self-test" in sys.argv:
+        _self_test()
+    else:
+        main()
