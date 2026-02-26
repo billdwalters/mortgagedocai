@@ -331,6 +331,16 @@ def _make_dedupe_key(description: str) -> str:
     return key.strip()
 
 
+def _token_jaccard(a: str, b: str) -> float:
+    """Token-level Jaccard similarity. Returns 0.0 for empty inputs."""
+    set_a = set(a.split())
+    set_b = set(b.split())
+    union = set_a | set_b
+    if not union:
+        return 0.0
+    return len(set_a & set_b) / len(union)
+
+
 _INCOME_FREQUENCIES_CANONICAL = {"monthly", "annual", "one-time", "unknown"}
 
 # ---------------------------------------------------------------------------
