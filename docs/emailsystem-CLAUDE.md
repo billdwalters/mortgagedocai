@@ -1,12 +1,31 @@
-# Knowledge Server (Tier-2) — Claude Context
+# EmailSystem — Claude Context
 
-**Project:** Email Tracking Knowledge Server — on-prem appliance, Tier-2 service
-**Role in system:** Tier-2 handles document indexing + semantic search only. Tier-1 (the email agent) calls this service to retrieve relevant client context before drafting replies.
+**Project:** EmailSystem — on-prem appliance for realtor email tracking and client context
 **This file lives in:** `emailsystem/CLAUDE.md` (copy here when repo is created)
 
 ---
 
-## What This Project Is
+## System Context (read this first)
+
+This codebase is **Tier-2 only** — the document knowledge service.
+
+The full emailsystem has two tiers:
+
+| Tier | What it is | Status |
+|------|-----------|--------|
+| **Tier-1 (primary, not yet built)** | Email tracking agent — monitors realtor inboxes, logs client communication history, drafts replies | Future project |
+| **Tier-2 (this repo)** | Knowledge search — indexes client files from Synology so Tier-1 can retrieve relevant context before drafting | What's being built now |
+
+**Tier-2 is optional for Tier-1** — email tracking works without it, but works better
+when client document context is available. Do not scope-creep Tier-2 into email
+handling. It is a pure index + search service.
+
+**Role of this service:** Tier-1 calls `POST /v1/knowledge/search` to retrieve relevant
+client document context before drafting a reply. That is the only integration point.
+
+---
+
+## What Tier-2 Does (this repo)
 
 A FastAPI service that:
 1. Scans a Synology-mounted folder tree (`/mnt/synology/<SharedFolder>/<RealtorFolder>/<ClientFolder>/`)
