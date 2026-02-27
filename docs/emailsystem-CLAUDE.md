@@ -14,27 +14,51 @@ and draft intelligent replies, routes emails to the right person, and allows app
 via Telegram (including voice). An optional paid add-on indexes the client's document
 folders for additional context.
 
+### The product in one sentence
+
+The AI reads every incoming email, understands what it's actually about, and drafts
+a specific, helpful reply — like a skilled assistant who read the email carefully,
+not an autoresponder that sends "Thank you for reaching out."
+
+**Example without Tier-2 (starter):**
+> Incoming: "Hi, we'd like to place an order for 50 units."
+> AI draft: *"Thanks for your order request. I noticed you didn't include a purchase
+> order number — let us know if that was intentional or if you'd like to add one
+> before we proceed."*
+
+**Example with Tier-2 (upsell — client folder context):**
+> Incoming: "Hi, I'm still interested in finding something in the downtown area."
+> AI draft: *"Great to hear from you! I remember you were looking at the 3-bed Colonial
+> on Maple Street last month. We actually have a similar property that just listed on
+> Oak Ave — would you like me to set up a showing?"*
+
+The difference: Tier-2 gives the AI memory of the client's history from their folder.
+Without it, the AI only knows what's in the current email thread.
+
 ### Two services — one repo
 
 ```
 emailsystem/
   docker-compose.yml       ← runs everything: postgres + emailsystem-api + knowledge-api + n8n
   services/
-    emailsystem-api/       ← Tier-1: PRIMARY (port 8000) — always deployed
-    knowledge-api/         ← Tier-2: OPTIONAL ADD-ON (port 9000) — paid upgrade only
+    emailsystem-api/       ← Tier-1: STARTER SYSTEM (port 8000) — always deployed
+    knowledge-api/         ← Tier-2: PAID UPSELL (port 9000) — optional add-on
 ```
 
 | | Tier-1 `emailsystem-api` | Tier-2 `knowledge-api` |
 |---|---|---|
-| **Purpose** | Email intake, AI classification, AI drafting, routing, Telegram, Calendar | Document folder indexing + semantic search |
-| **Required** | Always | Only if customer pays for add-on |
-| **OpenAI usage** | GPT for classification + drafting; embeddings for search | Embeddings only |
+| **Product name** | Starter system | Document context add-on (upsell) |
+| **Purpose** | Email intake, AI drafting, routing, Telegram, Calendar | Client folder indexing + semantic search |
+| **Required** | Always | Only if customer purchases the upgrade |
+| **OpenAI usage** | GPT for drafting + classification | Embeddings only (no GPT) |
 | **Database** | Postgres (tenants, mailboxes, threads, messages, audits) | Postgres + pgvector (workspaces, documents, chunks, embeddings) |
 | **Port** | 8000 | 9000 |
 | **n8n** | Yes — thin trigger + Telegram relay | No |
 
 **Tier-1 works without Tier-2.** When Tier-2 is present, Tier-1 calls
 `POST /v1/knowledge/search` before drafting to include relevant client document context.
+The code path for Tier-2 integration must be designed from the start even if Tier-2
+is not deployed — so adding it later requires no restructuring of Tier-1.
 
 ---
 
@@ -185,16 +209,22 @@ GET  /admin                            ← Admin GUI (web UI)
 ### Drafting rules (CRITICAL — read carefully)
 
 - **Always use LLM.** `drafting.py` calls OpenAI GPT. No templates, no f-strings as replies.
-- **Always pass thread context.** `threading.py` assembles prior messages into the prompt.
+- **Always pass full thread context.** `threading.py` assembles ALL prior messages in the
+  thread into the prompt. A follow-up email must reference what was already discussed.
+- **The LLM must reference specific details from the email.** If the email mentions a
+  missing PO number, the draft mentions the missing PO number. If it mentions a property,
+  the draft mentions that property. Generic replies are a product failure.
 - **If Tier-2 is configured:** `knowledge_client.py` retrieves relevant client document
-  chunks BEFORE calling the LLM. Include them in the system prompt as context.
-- **Prompt must instruct the LLM:**
-  - Tone: professional, concise, specific to the thread (not generic)
-  - For scheduling: propose specific times (from Calendar API) — do not ask for theirs
-  - For support: reference the specific problem from the thread
-  - Never start with "Thank you for reaching out" or similar filler openers
-- **Classification also uses LLM** — not keyword matching. The classifier prompt asks the
-  LLM to return structured JSON: `{intent, confidence, reasoning}`.
+  chunks BEFORE calling GPT. Pass them as additional context in the system prompt so
+  the AI can reference the client's history (properties viewed, past requests, etc.).
+- **LLM prompt must instruct:**
+  - Reference specific facts from the email and thread — never respond generically
+  - Tone: professional, concise, helpful
+  - For scheduling: propose specific times using Calendar API — do not ask for theirs
+  - Never open with "Thank you for reaching out", "I hope this finds you well", or similar
+  - Flag missing information (like a PO number) rather than silently ignoring it
+- **Classification also uses LLM** — not keyword matching. Returns structured JSON:
+  `{intent, confidence, reasoning}`. Intent informs routing, not drafting style.
 
 ---
 
