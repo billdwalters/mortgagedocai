@@ -2,7 +2,7 @@
 
 **Project:** Email Tracking Knowledge Server — on-prem appliance, Tier-2 service
 **Role in system:** Tier-2 handles document indexing + semantic search only. Tier-1 (the email agent) calls this service to retrieve relevant client context before drafting replies.
-**This file lives in:** `knowledge-server/CLAUDE.md` (copy here when repo is created)
+**This file lives in:** `emailsystem/CLAUDE.md` (copy here when repo is created)
 
 ---
 
@@ -41,7 +41,7 @@ It does **NOT** draft emails, call LLMs for answers, or modify source files. It 
 
 ### What is fundamentally different
 
-| Concern | Mortgage | Knowledge Server |
+| Concern | Mortgage | Email System |
 |---------|----------|-----------------|
 | Vector storage | Qdrant (local, file-based) | PostgreSQL + pgvector |
 | Embedding model | E5-large-v2 (local, no API) | OpenAI `text-embedding-3-small` (cloud) |
@@ -125,13 +125,13 @@ Docker Compose (deployment unit)
 ## Folder Structure
 
 ```
-knowledge-server/
+emailsystem/
   CLAUDE.md                     ← this file
   README.md
   .env.example
   docker-compose.yml
   services/
-    knowledge-api/
+    emailsystem-api/
       Dockerfile
       pyproject.toml
       alembic.ini
@@ -226,7 +226,7 @@ Auth: `X-API-Key` header must match `SERVER_API_KEY` env var. FastAPI dependency
 
 ## What's Next (Build Order)
 
-1. **Scaffold:** Docker Compose (Postgres + pgvector + knowledge-api), Alembic migrations, db models
+1. **Scaffold:** Docker Compose (Postgres + pgvector + emailsystem-api), Alembic migrations, db models
 2. **Scanner + fingerprinting:** port `sha256_file()` + folder walker from mortgage `step10_intake.py`
 3. **Parser + chunker:** port from mortgage `step11_process.py` (pypdf, python-docx, two-pass chunker)
 4. **Embedder:** OpenAI batch embedding (replace E5-large-v2 calls)
