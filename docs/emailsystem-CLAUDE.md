@@ -236,6 +236,37 @@ Auth: `X-API-Key` header must match `SERVER_API_KEY` env var. FastAPI dependency
 
 ---
 
+## Reference Codebase (Mortgage Project)
+
+The mortgage project is the hardened ancestor of this codebase. Its scripts are mounted
+read-only on the emailsystem server for Claude to read directly.
+
+**Mount:** `/mnt/mortgagedocai` (NFS read-only from 10.10.10.190:/opt/mortgagedocai)
+**Do not modify anything under this path.**
+
+When implementing each component, read the corresponding mortgage file **first** to
+inherit its hardening patterns before writing any new code:
+
+| Building this... | Read this first | What to inherit |
+|---|---|---|
+| `core/hashing.py` | `/mnt/mortgagedocai/scripts/lib.py` | `sha256_file()`, `normalize_chunk_text()`, `atomic_write_json()` staging→rename pattern |
+| `core/parser.py` (PDF/DOCX) | `/mnt/mortgagedocai/scripts/step11_process.py` | pypdf → pdfminer.six fallback, encrypted PDF safe-skip, exception handling |
+| `core/chunker.py` | `/mnt/mortgagedocai/scripts/step11_process.py` | Two-pass chunking logic, boundary detection, overlap edge cases |
+| `core/scanner.py` (folder walker) | `/mnt/mortgagedocai/scripts/step10_intake.py` | Folder tree walk, fingerprint-first pattern, fail-loud on bad paths |
+| `core/jobs.py` (ingestion lifecycle) | `/mnt/mortgagedocai/scripts/loan_service/domain.py` | Job status model (queued→running→done/failed), atomic state transitions |
+| Any atomic file/DB write | `/mnt/mortgagedocai/scripts/lib.py` | `atomic_write_json()` — always stage, then rename; never write in place |
+| Error handling discipline | `/mnt/mortgagedocai/scripts/lib.py` | `ContractError` — fail-loud, never silently degrade |
+| NAS folder scanning | `/mnt/mortgagedocai/scripts/step13_build_retrieval_pack.py` | `glob("*/chunks.jsonl")` — use glob patterns on NAS mounts, not `iterdir()+is_dir()` |
+
+**Instruction for Claude:** Read the referenced file before implementing each component.
+Apply the same hardening discipline. Do **not** copy mortgage-specific logic (Qdrant,
+run_id, UW conditions, Ollama, PHASE markers). Do **port** the defensive patterns:
+atomic writes, fail-loud errors, encrypted-PDF safe-skip, first-wins dedup, and
+NAS-reliable globbing. The emailsystem uses PostgreSQL + pgvector and Docker Compose —
+the structure is different, but the defensive discipline is the same.
+
+---
+
 ## Development Workflow
 
 Same TDD discipline as the mortgage project:
