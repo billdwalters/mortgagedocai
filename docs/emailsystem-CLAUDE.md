@@ -55,10 +55,13 @@ emailsystem/
 | **Port** | 8000 | 9000 |
 | **n8n** | Yes — thin trigger + Telegram relay | No |
 
-**Tier-1 works without Tier-2.** When Tier-2 is present, Tier-1 calls
-`POST /v1/knowledge/search` before drafting to include relevant client document context.
-The code path for Tier-2 integration must be designed from the start even if Tier-2
-is not deployed — so adding it later requires no restructuring of Tier-1.
+**Both services are deployed by default.** Tier-2 is inactive until a Synology mount
+is configured — it is NOT commented out or skipped. Most customers will want Tier-2.
+
+**Tier-1 integration with Tier-2 is always present in the code.** `knowledge_client.py`
+is called on every draft attempt. If `KNOWLEDGE_API_URL` is blank or Tier-2 returns
+empty results, the draft proceeds with email-only context — no error, no code branch.
+Adding Tier-2 for a customer = configure the env var + mount the Synology. Nothing else.
 
 ---
 
@@ -325,12 +328,16 @@ POST /v1/knowledge/search         → semantic search filtered by tenant/workspa
 services:
   postgres:          # shared by both services
   emailsystem-api:   # Tier-1, port 8000, always on
-  knowledge-api:     # Tier-2, port 9000, comment out if not purchased
+  knowledge-api:     # Tier-2, port 9000, always deployed — inactive until Synology configured
   n8n:               # port 5678, thin orchestrator
 ```
 
-Tier-2 can be disabled by commenting out the `knowledge-api` service block.
-Set `KNOWLEDGE_API_URL=` (blank) in Tier-1's env to disable the integration.
+Both services are always deployed. Tier-2 becomes active when:
+1. `SYNOLOGY_ROOT` env var points to a mounted Synology folder
+2. `KNOWLEDGE_API_URL=http://knowledge-api:9000` is set in Tier-1's env
+
+To deliver the starter-only product: leave `KNOWLEDGE_API_URL` blank.
+To activate the upsell: set the env var + mount the Synology. No code changes required.
 
 ---
 
@@ -364,7 +371,8 @@ FastAPI serves static files or a lightweight frontend.
 
 ### Phase 4 — Tier-2 Knowledge Add-On
 Synology document indexing, pgvector search, Tier-1 integration.
-Only build when Tier-1 is stable and a customer wants the add-on.
+Build this alongside Phase 3 — most customers will want it and the
+integration hook in Tier-1 is already wired from Phase 1.
 
 ### Phase 5 — Hardening + multi-industry
 Regression tests, audit trail, industry template abstraction.
