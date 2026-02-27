@@ -137,7 +137,7 @@ services/emailsystem-api/
     core/
       gmail_client.py        ← Gmail API wrapper (fetch, send, thread fetch)
       threading.py           ← assemble thread context for LLM prompt
-      classifier.py          ← LLM-based intent classification (NOT keyword matching)
+      classifier.py          ← rule-based MVP classification (one swappable function)
       policy.py              ← action decision engine (DRAFT/AUTO_SEND/ROUTE/IGNORE)
       router.py              ← route to user/department by intent + rules
       drafting.py            ← LLM draft generation (GPT, full thread context)
@@ -226,8 +226,9 @@ GET  /admin                            ← Admin GUI (web UI)
   - For scheduling: propose specific times using Calendar API — do not ask for theirs
   - Never open with "Thank you for reaching out", "I hope this finds you well", or similar
   - Flag missing information (like a PO number) rather than silently ignoring it
-- **Classification also uses LLM** — not keyword matching. Returns structured JSON:
-  `{intent, confidence, reasoning}`. Intent informs routing, not drafting style.
+- **Classification is rule-based for MVP** — one self-contained `classify()` function
+  that returns `{intent, confidence, reasoning}`. Structured so the body can be replaced
+  with an LLM call in Phase 2 without touching any calling code.
 
 ---
 
@@ -357,25 +358,26 @@ Current target industries: Realtors, Salespersons, Lawyers (future).
 
 ## Build Phases
 
-### Phase 1 — Core email loop (build first)
-Gmail OAuth → message ingestion → LLM classification → LLM draft →
-approval workflow → Gmail reply send → Telegram notification
+### Phase 1 — Full MVP (build all of this)
+All of the following are MVP requirements, not future work:
 
-### Phase 2 — Telegram + Calendar
-Voice approval via Telegram (speech-to-text → confirm → send)
-Google Calendar availability check + appointment scheduling
+- Gmail OAuth → message ingestion → thread tracking → message storage
+- LLM classification (rule-based MVP, one swappable function)
+- LLM GPT drafting (mandatory — never templates)
+- Knowledge client hook (always present, gracefully no-ops if unconfigured)
+- Approval workflow → Gmail reply send with correct thread headers
+- **Telegram** notifications + approval (text and voice via Whisper transcription)
+- **Google Calendar** availability check + appointment scheduling
+- **Admin GUI** (Jinja2 web UI at `/admin` — users, mailboxes, routing rules)
+- Tier-2 knowledge-api (Synology indexing + pgvector search)
 
-### Phase 3 — Admin GUI
-Web UI at `/admin` for managing users, mailboxes, routing rules, policies.
-FastAPI serves static files or a lightweight frontend.
+### Phase 2 — LLM Classification Upgrade
+Replace rule-based `classify()` with OpenAI GPT call.
+No calling code changes required — function signature stays identical.
 
-### Phase 4 — Tier-2 Knowledge Add-On
-Synology document indexing, pgvector search, Tier-1 integration.
-Build this alongside Phase 3 — most customers will want it and the
-integration hook in Tier-1 is already wired from Phase 1.
-
-### Phase 5 — Hardening + multi-industry
-Regression tests, audit trail, industry template abstraction.
+### Phase 3 — Hardening + Multi-Industry
+Regression tests, audit trail hardening, industry template abstraction,
+configurable draft tone/style per tenant via `policies` table.
 
 ---
 
