@@ -1,209 +1,271 @@
 # EmailSystem — Claude Context
 
-**Project:** EmailSystem — on-prem appliance for realtor email tracking and client context
-**This file lives in:** `emailsystem/CLAUDE.md` (copy here when repo is created)
+**Project:** EmailSystem — on-prem AI email assistant, turnkey appliance
+**This file lives in:** `emailsystem/CLAUDE.md` (copy here when repo is created on server)
+**Server:** `/opt/emailsystem` on 10.10.10.12 (Ubuntu mini-PC)
 
 ---
 
 ## System Context (read this first)
 
-This codebase is **Tier-2 only** — the document knowledge service.
+EmailSystem is a **turnkey AI email assistant** sold as a product to small businesses
+(Realtors, Salespersons, Lawyers, etc.). It monitors a Gmail inbox, uses AI to understand
+and draft intelligent replies, routes emails to the right person, and allows approvals
+via Telegram (including voice). An optional paid add-on indexes the client's document
+folders for additional context.
 
-The full emailsystem has two tiers:
+### Two services — one repo
 
-| Tier | What it is | Status |
-|------|-----------|--------|
-| **Tier-1 (primary, not yet built)** | Email tracking agent — monitors realtor inboxes, logs client communication history, drafts replies | Future project |
-| **Tier-2 (this repo)** | Knowledge search — indexes client files from Synology so Tier-1 can retrieve relevant context before drafting | What's being built now |
+```
+emailsystem/
+  docker-compose.yml       ← runs everything: postgres + emailsystem-api + knowledge-api + n8n
+  services/
+    emailsystem-api/       ← Tier-1: PRIMARY (port 8000) — always deployed
+    knowledge-api/         ← Tier-2: OPTIONAL ADD-ON (port 9000) — paid upgrade only
+```
 
-**Tier-2 is optional for Tier-1** — email tracking works without it, but works better
-when client document context is available. Do not scope-creep Tier-2 into email
-handling. It is a pure index + search service.
+| | Tier-1 `emailsystem-api` | Tier-2 `knowledge-api` |
+|---|---|---|
+| **Purpose** | Email intake, AI classification, AI drafting, routing, Telegram, Calendar | Document folder indexing + semantic search |
+| **Required** | Always | Only if customer pays for add-on |
+| **OpenAI usage** | GPT for classification + drafting; embeddings for search | Embeddings only |
+| **Database** | Postgres (tenants, mailboxes, threads, messages, audits) | Postgres + pgvector (workspaces, documents, chunks, embeddings) |
+| **Port** | 8000 | 9000 |
+| **n8n** | Yes — thin trigger + Telegram relay | No |
 
-**Role of this service:** Tier-1 calls `POST /v1/knowledge/search` to retrieve relevant
-client document context before drafting a reply. That is the only integration point.
+**Tier-1 works without Tier-2.** When Tier-2 is present, Tier-1 calls
+`POST /v1/knowledge/search` before drafting to include relevant client document context.
 
 ---
 
-## What Tier-2 Does (this repo)
+## Non-Negotiables (never break these)
 
-A FastAPI service that:
-1. Scans a Synology-mounted folder tree (`/mnt/synology/<SharedFolder>/<RealtorFolder>/<ClientFolder>/`)
-2. Extracts text from PDFs, DOCX, TXT/MD
-3. Chunks + embeds documents via **OpenAI API** (not local GPU)
-4. Stores everything in **PostgreSQL + pgvector** (not Qdrant)
-5. Exposes `/v1/knowledge/search` for semantic retrieval by Tier-1
-
-It does **NOT** draft emails, call LLMs for answers, or modify source files. It is purely an index + search layer.
-
----
-
-## Relationship to the Mortgage Project
-
-**The mortgage project (`mortgagedocai`) is the direct ancestor of this codebase.** Many patterns, algorithms, and hard-won lessons are shared. Do not reinvent what is already solved.
-
-### What to reuse / port directly
-
-| Mortgage component | Where it lives | What to reuse |
-|--------------------|---------------|---------------|
-| `sha256_file()` | `lib.py` | Identical — file fingerprinting for change detection |
-| `normalize_chunk_text()` | `lib.py` | Identical — copy into `core/hashing.py` |
-| `chunk_text_hash()` | `lib.py` | Identical concept — used for `chunk_sha256` |
-| PDF extraction (pypdf + fallback) | `step11_process.py` | Same pypdf first / pdfminer fallback pattern |
-| DOCX extraction (python-docx) | `step11_process.py` | Identical |
-| XLSX extraction (openpyxl) | `step11_process.py` | Identical |
-| Two-pass chunking algorithm | `step11_process.py` | Same logic, different params (3500/400 vs 4500/800) |
-| FastAPI X-API-Key auth | `loan_api.py` | Same env-var-driven key check, different header name |
-| Job status pattern (queued/running/done/failed) | `loan_service/domain.py` | Maps to `ingestion_jobs` table |
-| Fail-loud / raise on contract violation | `lib.py:ContractError` | Same discipline — raise, never silently skip |
-| Folder scanner pattern | `step10_intake.py` | Same concept — walk folder tree, fingerprint files |
-
-### What is fundamentally different
-
-| Concern | Mortgage | Email System |
-|---------|----------|-----------------|
-| Vector storage | Qdrant (local, file-based) | PostgreSQL + pgvector |
-| Embedding model | E5-large-v2 (local, no API) | OpenAI `text-embedding-3-small` (cloud) |
-| Embed dimensions | 1024 | 1536 |
-| ORM / migrations | Raw dicts + JSONL files | SQLAlchemy 2.x + Alembic |
-| Identity model | `tenant_id` + `loan_id` | `tenant_id` + `workspace_id` + `client_id` |
-| Incremental indexing | Full reprocess each run | `mtime` + `content_sha256` change detection |
-| Deployment | Bare Python scripts + systemd | Docker Compose |
-| Config | argparse + hardcoded paths | Pydantic v2 Settings + `.env` |
-| Job persistence | Disk JSON files | `ingestion_jobs` table in Postgres |
-| LLM answering | Ollama (local) | None — Tier-2 is search only |
-| Chunking params | target=4500 / overlap=800 | target=3500 / overlap=400 |
+- **Drafting MUST use LLM (OpenAI GPT)** — never keyword templates or hardcoded strings.
+  The goal is context-aware replies, NOT "Thank you for reaching out."
+- **Thread context MUST be passed to the LLM** — full thread history included when drafting.
+  A reply to a follow-up must reference the prior conversation.
+- **n8n is thin** — Gmail trigger, Telegram relay only. Zero business logic in n8n.
+  All logic lives in `emailsystem-api` so n8n can be removed later with minimal changes.
+- **Multi-tenant isolation** — every DB query filters by `tenant_id`. No exceptions.
+- **Secrets in env vars only** — never hardcode API keys, OAuth tokens, or passwords.
+- **Human approval before sending** — default action is `DRAFT_FOR_APPROVAL`.
+  `AUTO_SEND` only when tenant policy explicitly allows it AND confidence is high.
+- **Admin GUI is required** — not just API endpoints. Customers need a web UI to manage
+  users, mailboxes, routing rules, and settings without touching config files.
+- **All schema changes via Alembic migrations** — no manual DDL in production.
+- **Fail-loud** — raise errors clearly, never silently degrade or swallow exceptions.
 
 ---
 
-## Why Both Projects Share the Same Synology Hardware
+## Tier-1: EmailSystem Core (Primary)
 
-The mortgage project reads loan documents from:
-```
-/mnt/source_loans/5-Borrowers TBD/        ← Synology mount, read-only
-```
+### What it does
 
-This knowledge server reads realtor/client documents from:
-```
-/mnt/synology/<SharedFolder>/<RealtorFolder>/<ClientFolder>/   ← same Synology, different path, read-only
-```
+1. n8n detects new Gmail message → calls `POST /v1/ingest/gmail/message_ref`
+2. emailsystem-api fetches full message via Gmail API
+3. LLM classifies intent (schedule, pricing, support, spam, general)
+4. LLM drafts a context-aware reply using full thread history
+   - If Tier-2 is available: retrieves relevant client document context first
+5. Policy engine decides action: `DRAFT_FOR_APPROVAL`, `AUTO_SEND`, `ROUTE_ONLY`, `IGNORE`
+6. Telegram notification sent to realtor/salesperson with draft
+7. User approves, edits, or rejects via Telegram (text or voice)
+8. On approval: emailsystem-api sends Gmail reply in-thread with correct headers
 
-**They coexist safely because:**
-- Both treat the Synology as **read-only** — neither modifies source files
-- They use completely different mount paths and folder structures
-- They write to different output destinations (mortgage → NAS TrueNAS; knowledge server → Postgres)
-- Different tenants, different Qdrant collections vs pgvector tables
-- The same AI server hardware runs both workloads
-
-**Why share hardware instead of separate boxes:**
-- One NAS investment serves both use cases
-- The AI server already has the network path to Synology established
-- Docker Compose isolates the knowledge server cleanly alongside the mortgage pipeline
-- Future integration (e.g. realtor checking mortgage conditions) becomes straightforward
-
----
-
-## Identity Model
-
-```
-tenant_id    → the brokerage / company (top-level isolation)
-workspace_id → the realtor (one workspace per realtor folder)
-client_id    → the client (one client per subfolder under realtor)
-```
-
-Folder mapping:
-```
-/mnt/synology/<SharedFolder>/              ← tenant root (SYNOLOGY_ROOT env var)
-  <RealtorFolder>/                         → workspace (name + root_path stored in workspaces table)
-    <ClientFolder>/                        → client (folder_name + folder_path in clients table)
-      **/<docs>                            → documents (all files recursively)
-```
-
-**Every query MUST filter by all three:** `tenant_id + workspace_id + client_id`. Non-negotiable — no exceptions.
-
----
-
-## Tech Stack
+### Tech stack
 
 ```
 Python 3.11+
 FastAPI
 SQLAlchemy 2.x (sync for MVP)
-Alembic (all schema changes via migrations only — no manual DDL in prod)
-Pydantic v2 (Settings class for all config)
+Alembic (all schema changes via migrations only)
+Pydantic v2 Settings
+PostgreSQL 15+
+OpenAI Python SDK (GPT for drafting + classification; embeddings for thread search)
+Google API Python Client (Gmail + Calendar)
+python-telegram-bot (Telegram notifications + voice approval)
+Docker Compose
+```
+
+### Folder structure
+
+```
+services/emailsystem-api/
+  Dockerfile
+  pyproject.toml
+  alembic.ini
+  alembic/
+    env.py
+    versions/
+  src/app/
+    main.py                  ← FastAPI app factory
+    config.py                ← Pydantic v2 Settings (all config from env)
+    security.py              ← X-API-Key dependency for n8n→API auth
+    api/v1/
+      ingest.py              ← POST /v1/ingest/gmail/message_ref
+      approval.py            ← POST /v1/approval/decision
+      gmail_oauth.py         ← POST /v1/admin/mailboxes/upsert + GET
+      admin.py               ← admin CRUD (users, routing rules, policies)
+      telegram.py            ← POST /v1/telegram/webhook
+      calendar.py            ← GET /v1/calendar/availability, POST /schedule
+    core/
+      gmail_client.py        ← Gmail API wrapper (fetch, send, thread fetch)
+      threading.py           ← assemble thread context for LLM prompt
+      classifier.py          ← LLM-based intent classification (NOT keyword matching)
+      policy.py              ← action decision engine (DRAFT/AUTO_SEND/ROUTE/IGNORE)
+      router.py              ← route to user/department by intent + rules
+      drafting.py            ← LLM draft generation (GPT, full thread context)
+      telegram_client.py     ← send notifications, receive approvals, voice→text
+      calendar_client.py     ← Google Calendar availability + event creation
+      knowledge_client.py    ← optional HTTP call to Tier-2 /v1/knowledge/search
+    db/
+      session.py             ← SQLAlchemy session dependency
+      models.py              ← all ORM models
+    util/
+      logging.py
+  frontend/                  ← Admin GUI (served by FastAPI at /admin)
+  tests/
+    test_threading.py
+    test_classifier.py
+    test_drafting.py
+    test_policy.py
+```
+
+### Database schema
+
+```
+tenants        id, tenant_key (unique), name, industry, created_at
+users          id, tenant_id, email, display_name, role,
+               telegram_user_id (nullable), calendar_id (nullable)
+mailboxes      id, tenant_id, gmail_user (unique per tenant), oauth_json, created_at
+threads        id, tenant_id, mailbox_id, provider_thread_id (indexed),
+               stage, owner_user_id (nullable), last_message_at
+messages       id, tenant_id, thread_id, direction (inbound/outbound),
+               provider_message_id, rfc_message_id, headers_json,
+               from_email, to_emails, cc_emails, subject, body_text,
+               received_at, sent_at
+audits         id, tenant_id, thread_id, inbound_message_id,
+               intent, confidence, action, draft_subject, draft_body_text,
+               approved_at, sent_message_id (nullable), created_at
+routing_rules  id, tenant_id, priority, match_json, route_queue,
+               assign_user_id (nullable), auto_send_allowed (bool)
+policies       id, tenant_id, name, json
+```
+
+### Environment variables
+
+```bash
+DATABASE_URL=postgresql+psycopg2://user:pass@localhost:5432/emailsystem
+OPENAI_API_KEY=sk-...
+OPENAI_CHAT_MODEL=gpt-4o-mini          # GPT model for drafting + classification
+OPENAI_EMBED_MODEL=text-embedding-3-small
+SERVER_API_KEY=...                      # X-API-Key: n8n → emailsystem-api
+TELEGRAM_BOT_TOKEN=...
+GOOGLE_OAUTH_CLIENT_ID=...
+GOOGLE_OAUTH_CLIENT_SECRET=...
+KNOWLEDGE_API_URL=http://knowledge-api:9000   # leave blank to disable Tier-2
+LOG_LEVEL=INFO
+```
+
+### API endpoints
+
+```
+GET  /health
+POST /v1/ingest/gmail/message_ref      ← n8n calls this on new Gmail message
+POST /v1/approval/decision             ← n8n calls this after Telegram approval
+POST /v1/telegram/webhook              ← Telegram calls this for voice/text replies
+GET  /v1/calendar/availability         ← check available slots
+POST /v1/calendar/schedule             ← create calendar event
+POST /v1/admin/mailboxes/upsert        ← store Gmail OAuth token
+GET  /v1/admin/mailboxes               ← list mailboxes
+GET/POST /v1/admin/users               ← manage users
+GET/POST /v1/admin/routing_rules       ← manage routing rules
+GET  /admin                            ← Admin GUI (web UI)
+```
+
+### Drafting rules (CRITICAL — read carefully)
+
+- **Always use LLM.** `drafting.py` calls OpenAI GPT. No templates, no f-strings as replies.
+- **Always pass thread context.** `threading.py` assembles prior messages into the prompt.
+- **If Tier-2 is configured:** `knowledge_client.py` retrieves relevant client document
+  chunks BEFORE calling the LLM. Include them in the system prompt as context.
+- **Prompt must instruct the LLM:**
+  - Tone: professional, concise, specific to the thread (not generic)
+  - For scheduling: propose specific times (from Calendar API) — do not ask for theirs
+  - For support: reference the specific problem from the thread
+  - Never start with "Thank you for reaching out" or similar filler openers
+- **Classification also uses LLM** — not keyword matching. The classifier prompt asks the
+  LLM to return structured JSON: `{intent, confidence, reasoning}`.
+
+---
+
+## Tier-2: Knowledge API (Optional Add-On)
+
+### What it does
+
+Indexes a Synology-mounted folder tree of client documents and exposes a semantic
+search endpoint that Tier-1 calls before drafting. Deployed only when the customer
+purchases the document context add-on.
+
+### Tech stack
+
+```
+Python 3.11+ + FastAPI + SQLAlchemy 2.x + Alembic + Pydantic v2
 PostgreSQL 15+ with pgvector extension
-pgvector/pgvector Docker image (or install extension manually)
-OpenAI Python SDK (embeddings only — no chat/completion calls in Tier-2)
-pypdf + pdfminer.six (PDF extraction)
-python-docx (DOCX extraction)
-Docker Compose (deployment unit)
+OpenAI text-embedding-3-small (EMBED_DIM=1536)
+pypdf + pdfminer.six + python-docx
+Docker Compose (same compose file as Tier-1)
 ```
 
----
-
-## Folder Structure
+### Folder structure
 
 ```
-emailsystem/
-  CLAUDE.md                     ← this file
-  README.md
-  .env.example
-  docker-compose.yml
-  services/
-    emailsystem-api/
-      Dockerfile
-      pyproject.toml
-      alembic.ini
-      alembic/
-        env.py
-        versions/
-      src/app/
-        main.py                  ← FastAPI app factory
-        config.py                ← Pydantic v2 Settings
-        api/v1/
-          knowledge.py           ← POST /v1/knowledge/search
-          ingest.py              ← POST /v1/ingest/scan + /process_pending
-        db/
-          session.py             ← SQLAlchemy session dependency
-          models.py              ← ORM models (workspaces, clients, documents, chunks, embeddings, ingestion_jobs)
-        core/
-          scanner.py             ← folder tree walker (port of step10_intake.py concept)
-          parser.py              ← PDF/DOCX/TXT extraction (port of step11_process.py)
-          chunker.py             ← two-pass chunker (port of step11_process.py)
-          embedder.py            ← OpenAI batch embedding
-          retrieval.py           ← pgvector cosine search
-          hashing.py             ← sha256_file, normalize_chunk_text, chunk_sha256
-          paths.py               ← realtor/client folder mapping
-          jobs.py                ← ingestion job lifecycle
-        util/
-          logging.py
-          time.py
-      tests/
-        test_chunker.py
-        test_path_mapping.py
-        test_retrieval_filters.py
+services/knowledge-api/
+  Dockerfile
+  pyproject.toml
+  alembic.ini
+  alembic/versions/
+  src/app/
+    main.py
+    config.py
+    api/v1/
+      knowledge.py           ← POST /v1/knowledge/search
+      ingest.py              ← POST /v1/ingest/scan + /process_pending
+    db/
+      session.py
+      models.py              ← workspaces, clients, documents, chunks, embeddings, ingestion_jobs
+    core/
+      scanner.py             ← Synology folder walker
+      parser.py              ← PDF/DOCX extraction
+      chunker.py             ← two-pass chunker (target=3500, overlap=400)
+      embedder.py            ← OpenAI batch embedding
+      retrieval.py           ← pgvector cosine search
+      hashing.py             ← sha256_file, normalize_chunk_text
+      paths.py               ← realtor/client folder mapping
+      jobs.py                ← ingestion job lifecycle
+    util/logging.py
+  tests/
 ```
 
----
-
-## Database Schema (key points)
-
-All changes via Alembic migrations. Never alter tables manually in production.
+### Identity model
 
 ```
-workspaces    tenant_id + workspace_id (realtor)
-clients       tenant_id + workspace_id + client_id (client folder)
-documents     file fingerprint (mtime + content_sha256); parse_status: pending/parsed/failed
-chunks        document_id + chunk_index; stores text + char/page offsets + chunk_sha256
-embeddings    chunk_id → vector(1536); ivfflat cosine index (lists=100)
-ingestion_jobs  job lifecycle: queued → running → done/failed; stats_json JSONB
+tenant_id    → the business (top-level isolation)
+workspace_id → the realtor/salesperson (one per folder under Synology root)
+client_id    → the client (one per subfolder under workspace)
 ```
 
-**Incremental indexing rule:** When scanning, compare `mtime` first (fast). If mtime changed, recompute `content_sha256`. Only mark `parse_status = pending` if sha256 actually differs. Unchanged files → skip entirely.
+Every search MUST filter by all three. No exceptions.
 
----
+### Synology folder mapping
 
-## Environment Variables
+```
+/mnt/synology/<SharedFolder>/              ← SYNOLOGY_ROOT env var
+  <RealtorFolder>/                         → workspace
+    <ClientFolder>/                        → client
+      **/<docs>                            → documents (recursive)
+```
+
+### Environment variables
 
 ```bash
 DATABASE_URL=postgresql+psycopg2://user:pass@localhost:5432/knowledge
@@ -211,78 +273,97 @@ OPENAI_API_KEY=sk-...
 OPENAI_EMBED_MODEL=text-embedding-3-small
 EMBED_DIM=1536
 SYNOLOGY_ROOT=/mnt/synology/SharedFolder
-SERVER_API_KEY=...                    # X-API-Key header for Tier-1 → Tier-2 auth
+SERVER_API_KEY=...                         # same key as Tier-1 for simplicity
 LOG_LEVEL=INFO
 ```
 
-**Never hardcode any of these.** All secrets via environment only.
-
----
-
-## API Endpoints
+### API endpoints
 
 ```
-GET  /health                      → {"ok": true}
-POST /v1/ingest/scan              → fingerprint all files, enqueue pending (auth required)
-POST /v1/ingest/process_pending   → parse + chunk + embed pending docs (auth required)
-POST /v1/knowledge/search         → semantic search with tenant/workspace/client filter (auth required)
+GET  /health
+POST /v1/ingest/scan              → fingerprint all files, enqueue pending
+POST /v1/ingest/process_pending   → parse + chunk + embed pending docs
+POST /v1/knowledge/search         → semantic search filtered by tenant/workspace/client
 ```
 
-Auth: `X-API-Key` header must match `SERVER_API_KEY` env var. FastAPI dependency injection pattern (not middleware — cleaner than mortgage's BaseHTTPMiddleware approach).
+---
+
+## Combined Docker Compose
+
+```yaml
+# emailsystem/docker-compose.yml
+services:
+  postgres:          # shared by both services
+  emailsystem-api:   # Tier-1, port 8000, always on
+  knowledge-api:     # Tier-2, port 9000, comment out if not purchased
+  n8n:               # port 5678, thin orchestrator
+```
+
+Tier-2 can be disabled by commenting out the `knowledge-api` service block.
+Set `KNOWLEDGE_API_URL=` (blank) in Tier-1's env to disable the integration.
 
 ---
 
-## Non-Negotiables
+## Industry Template Design
 
-- **Tenant isolation is absolute:** every DB query filters `tenant_id + workspace_id + client_id` — no exceptions
-- **Synology mount is read-only:** never write to source files
-- **OpenAI API key never hardcoded** — env var only
-- **All schema changes via Alembic migrations** — no manual DDL in production
-- **Incremental indexing must be correct** — do not reprocess files whose sha256 hasn't changed
-- **Docker Compose is the deployment unit** — no bare-script deployment for this project
+The system is designed to be resold across industries. `tenant.industry` field
+drives industry-specific behaviour. When adding industry support:
+
+- Routing rules are tenant-configurable via admin UI (not hardcoded)
+- Draft tone/style prompt is configurable per tenant via `policies` table
+- Folder structure for Tier-2 maps to whatever the industry uses for client docs
+- Do NOT hardcode "Realtor" or "real estate" terminology into core logic
+
+Current target industries: Realtors, Salespersons, Lawyers (future).
 
 ---
 
-## What's Next (Build Order)
+## Build Phases
 
-1. **Scaffold:** Docker Compose (Postgres + pgvector + emailsystem-api), Alembic migrations, db models
-2. **Scanner + fingerprinting:** port `sha256_file()` + folder walker from mortgage `step10_intake.py`
-3. **Parser + chunker:** port from mortgage `step11_process.py` (pypdf, python-docx, two-pass chunker)
-4. **Embedder:** OpenAI batch embedding (replace E5-large-v2 calls)
-5. **Ingest endpoints:** `/v1/ingest/scan` + `/v1/ingest/process_pending`
-6. **Retrieval endpoint:** `/v1/knowledge/search` with pgvector cosine similarity
-7. **Tests:** chunker determinism, path mapping, retrieval filter isolation
+### Phase 1 — Core email loop (build first)
+Gmail OAuth → message ingestion → LLM classification → LLM draft →
+approval workflow → Gmail reply send → Telegram notification
+
+### Phase 2 — Telegram + Calendar
+Voice approval via Telegram (speech-to-text → confirm → send)
+Google Calendar availability check + appointment scheduling
+
+### Phase 3 — Admin GUI
+Web UI at `/admin` for managing users, mailboxes, routing rules, policies.
+FastAPI serves static files or a lightweight frontend.
+
+### Phase 4 — Tier-2 Knowledge Add-On
+Synology document indexing, pgvector search, Tier-1 integration.
+Only build when Tier-1 is stable and a customer wants the add-on.
+
+### Phase 5 — Hardening + multi-industry
+Regression tests, audit trail, industry template abstraction.
 
 ---
 
 ## Reference Codebase (Mortgage Project)
 
-The mortgage project is the hardened ancestor of this codebase. Its scripts are mounted
-read-only on the emailsystem server for Claude to read directly.
+The mortgage project (`mortgagedocai`) is a hardened Python/FastAPI system on the
+same hardware. Its defensive patterns are battle-tested and should be inherited.
 
 **Mount:** `/mnt/mortgagedocai` (NFS read-only from 10.10.10.190:/opt/mortgagedocai)
 **Do not modify anything under this path.**
 
-When implementing each component, read the corresponding mortgage file **first** to
-inherit its hardening patterns before writing any new code:
-
 | Building this... | Read this first | What to inherit |
 |---|---|---|
-| `core/hashing.py` | `/mnt/mortgagedocai/scripts/lib.py` | `sha256_file()`, `normalize_chunk_text()`, `atomic_write_json()` staging→rename pattern |
-| `core/parser.py` (PDF/DOCX) | `/mnt/mortgagedocai/scripts/step11_process.py` | pypdf → pdfminer.six fallback, encrypted PDF safe-skip, exception handling |
-| `core/chunker.py` | `/mnt/mortgagedocai/scripts/step11_process.py` | Two-pass chunking logic, boundary detection, overlap edge cases |
-| `core/scanner.py` (folder walker) | `/mnt/mortgagedocai/scripts/step10_intake.py` | Folder tree walk, fingerprint-first pattern, fail-loud on bad paths |
-| `core/jobs.py` (ingestion lifecycle) | `/mnt/mortgagedocai/scripts/loan_service/domain.py` | Job status model (queued→running→done/failed), atomic state transitions |
-| Any atomic file/DB write | `/mnt/mortgagedocai/scripts/lib.py` | `atomic_write_json()` — always stage, then rename; never write in place |
-| Error handling discipline | `/mnt/mortgagedocai/scripts/lib.py` | `ContractError` — fail-loud, never silently degrade |
-| NAS folder scanning | `/mnt/mortgagedocai/scripts/step13_build_retrieval_pack.py` | `glob("*/chunks.jsonl")` — use glob patterns on NAS mounts, not `iterdir()+is_dir()` |
+| Any error handling | `/mnt/mortgagedocai/scripts/lib.py` | `ContractError` — fail-loud, never silently degrade |
+| Any DB/file write | `/mnt/mortgagedocai/scripts/lib.py` | `atomic_write_json()` — stage then rename, never write in place |
+| `knowledge-api/core/hashing.py` | `/mnt/mortgagedocai/scripts/lib.py` | `sha256_file()`, `normalize_chunk_text()` |
+| `knowledge-api/core/parser.py` | `/mnt/mortgagedocai/scripts/step11_process.py` | pypdf → pdfminer fallback, encrypted PDF safe-skip |
+| `knowledge-api/core/chunker.py` | `/mnt/mortgagedocai/scripts/step11_process.py` | Two-pass chunking, overlap edge cases |
+| `knowledge-api/core/scanner.py` | `/mnt/mortgagedocai/scripts/step10_intake.py` | Folder walk, fingerprint-first, fail-loud on bad paths |
+| `knowledge-api/core/jobs.py` | `/mnt/mortgagedocai/scripts/loan_service/domain.py` | Job status model, atomic state transitions |
+| NAS folder scanning | `/mnt/mortgagedocai/scripts/step13_build_retrieval_pack.py` | Use `glob("*/pattern")` on NAS — never `iterdir()+is_dir()` |
 
 **Instruction for Claude:** Read the referenced file before implementing each component.
-Apply the same hardening discipline. Do **not** copy mortgage-specific logic (Qdrant,
-run_id, UW conditions, Ollama, PHASE markers). Do **port** the defensive patterns:
-atomic writes, fail-loud errors, encrypted-PDF safe-skip, first-wins dedup, and
-NAS-reliable globbing. The emailsystem uses PostgreSQL + pgvector and Docker Compose —
-the structure is different, but the defensive discipline is the same.
+Port defensive patterns (atomic writes, fail-loud, encrypted-PDF safe-skip, first-wins
+dedup, NAS-reliable globbing). Do NOT copy mortgage-specific logic (Qdrant, run_id,
+PHASE markers, UW conditions, Ollama).
 
 ---
 
@@ -290,21 +371,37 @@ the structure is different, but the defensive discipline is the same.
 
 Same TDD discipline as the mortgage project:
 
-1. **Plan first** — research, pre-flight audit, flag any spec inconsistencies
+1. **Plan first** — research, audit spec against this CLAUDE.md, flag inconsistencies
 2. **Red** — write failing tests
 3. **Green** — implement until tests pass
 4. **Regression** — run full suite
-5. **Commit each phase** with semantic messages
+5. **Commit each phase:** `test(area): ...`, `fix(area): ...`, `feat(area): ...`
 
-**ChatGPT is the System Architect.** Claude is the Implementation Assistant. Verify specs against this CLAUDE.md before implementing — flag hallucinations (e.g. wrong embed dimensions, wrong folder paths).
+**ChatGPT is the System Architect.** Claude is the Implementation Assistant.
+Before implementing any spec from ChatGPT, verify it against this CLAUDE.md.
+
+### Known ChatGPT spec gaps to watch for
+
+- ChatGPT's Tier-1 spec uses **keyword/template drafting** — this is WRONG.
+  Drafting MUST use OpenAI GPT. Flag and fix before implementing `drafting.py`.
+- ChatGPT's Tier-1 spec has NO `OPENAI_API_KEY` in env vars — add it.
+- ChatGPT deferred Google Calendar — it is in scope (Phase 2).
+- ChatGPT deferred Telegram voice — it is in scope (Phase 2).
+- ChatGPT called the Tier-2 service `emailsystem-api` — wrong name. It is `knowledge-api`.
+- `EMBED_DIM=1536` for `text-embedding-3-small` — NOT 1024 (that's the mortgage project).
+- SQLAlchemy 2.x: use `session.execute(select(...))` — NOT `session.query(...)`.
 
 ---
 
 ## Common Gotchas
 
-- `EMBED_DIM=1536` for `text-embedding-3-small` (NOT 1024 — that's the mortgage project's E5 model)
-- ivfflat index needs ~100K vectors to beat exact scan; for small datasets, exact cosine search is fine and more accurate — don't force the index prematurely
-- SQLAlchemy 2.x uses `session.execute(select(...))` not `session.query(...)` — different API
-- OpenAI embedding API has rate limits — batch requests (max 2048 inputs per call) and add retry logic
-- Tier-2 does NOT call OpenAI chat/completions — search only. LLM answering is Tier-1's job.
-- `pgvector/pgvector` Docker image already has the extension; no need to install manually
+- Gmail send requires `threadId` + correct `In-Reply-To` + `References` headers —
+  without these, Gmail creates a new thread instead of replying in-thread.
+- Telegram voice messages are `.ogg` files — must be transcribed via OpenAI Whisper
+  before passing to the approval workflow.
+- Google Calendar OAuth is per-user (not per-tenant) — each user authenticates separately.
+- OpenAI rate limits: batch embedding requests (max 2048 inputs), add retry with backoff.
+- pgvector ivfflat index needs ~100K vectors to beat exact scan — use exact cosine for MVP.
+- n8n workflows must contain ZERO business logic — if you find yourself adding conditions
+  or transformations in n8n, move that logic to emailsystem-api instead.
+- Admin GUI: serve from FastAPI using `StaticFiles` mount — no separate frontend server needed.
