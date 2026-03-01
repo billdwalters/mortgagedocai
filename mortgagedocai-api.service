@@ -8,36 +8,31 @@ Type=simple
 User=bill
 Group=bill
 WorkingDirectory=/opt/mortgagedocai
+
 ExecStartPre=/bin/bash -lc 'while ss -ltn sport = :8000 | grep -q LISTEN; do echo "8000 busy, waiting..."; sleep 1; done'
 
+# Centralized environment (NO secrets in unit file)
+EnvironmentFile=/etc/mortgagedocai/env
+EnvironmentFile=-/etc/mortgagedocai/env.local
 
-# Environment
-Environment="MORTGAGEDOCAI_ALLOWED_TENANTS=peak"
 Environment="PATH=/opt/mortgagedocai/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONUNBUFFERED=1"
-Environment=MORTGAGEDOCAI_API_KEY=123456789
-Environment="MORTGAGEDOCAI_SOURCE_LOANS_ROOT=/mnt/source_loans"
-
-# Optional: suppress HF noise globally
 Environment="HF_HUB_DISABLE_PROGRESS_BARS=1"
 Environment="TRANSFORMERS_VERBOSITY=error"
 Environment="TQDM_MININTERVAL=999999"
 
-# IMPORTANT: bootstrap_mortgagedocai.sh patches --host to the Tailscale IPv4 address
-# detected at install time. Do NOT change to 0.0.0.0 or 127.0.0.1 in production.
+# IMPORTANT: bootstrap patches --host to Tailscale IPv4
 ExecStart=/opt/mortgagedocai/venv/bin/python3 scripts/loan_api.py --host 127.0.0.1 --port 8000
 
 Restart=always
 RestartSec=5
 TimeoutStopSec=20
 
-# Hardening
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=false
 
-# Logging
 StandardOutput=journal
 StandardError=journal
 

@@ -9,12 +9,10 @@ User=bill
 Group=bill
 WorkingDirectory=/opt/mortgagedocai
 
-# Same core env as API (keep in sync)
-Environment="MORTGAGEDOCAI_ALLOWED_TENANTS=peak"
-Environment="MORTGAGEDOCAI_SOURCE_LOANS_ROOT=/mnt/source_loans"
-Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=/etc/mortgagedocai/env
+EnvironmentFile=-/etc/mortgagedocai/env.local
 
-# Optional: suppress HF noise globally
+Environment="PYTHONUNBUFFERED=1"
 Environment="HF_HUB_DISABLE_PROGRESS_BARS=1"
 Environment="TRANSFORMERS_VERBOSITY=error"
 Environment="TQDM_MININTERVAL=999999"
