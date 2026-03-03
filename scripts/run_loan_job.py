@@ -223,7 +223,7 @@ def main(argv=None) -> int:
             _phase("INTAKE")
             validate_source_path(source_path)
             _run([
-                "python3", _step("step10_intake.py"),
+                sys.executable, _step("step10_intake.py"),
                 "--tenant-id", tenant_id,
                 "--loan-id", loan_id,
                 "--source-path", source_path,
@@ -233,7 +233,7 @@ def main(argv=None) -> int:
         if not args.skip_process:
             _phase("PROCESS")
             _run([
-                "python3", _step("step11_process.py"),
+                sys.executable, _step("step11_process.py"),
                 "--tenant-id", tenant_id,
                 "--loan-id", loan_id,
                 "--run-id", run_id,
@@ -243,7 +243,7 @@ def main(argv=None) -> int:
         _phase("STEP13_GENERAL")
         top_k_general = args.top_k if args.top_k is not None else 80
         step13_general_cmd = [
-            "python3", _step("step13_build_retrieval_pack.py"),
+            sys.executable, _step("step13_build_retrieval_pack.py"),
             "--tenant-id", tenant_id,
             "--loan-id", loan_id,
             "--run-id", run_id,
@@ -279,7 +279,7 @@ def main(argv=None) -> int:
             top_k_income = args.top_k if args.top_k is not None else 120
             max_per_file = args.max_per_file if args.max_per_file is not None else 12
             step13_income_cmd = [
-                "python3", _step("step13_build_retrieval_pack.py"),
+                sys.executable, _step("step13_build_retrieval_pack.py"),
                 "--tenant-id", tenant_id,
                 "--loan-id", loan_id,
                 "--run-id", run_id,
@@ -311,7 +311,7 @@ def main(argv=None) -> int:
             _phase("STEP12_INCOME_ANALYSIS")
             # Step 12: income_analysis (env RUN_LLM=0 when --no-run-llm)
             step12_income_cmd = [
-                "python3", _step("step12_analyze.py"),
+                sys.executable, _step("step12_analyze.py"),
                 "--tenant-id", tenant_id,
                 "--loan-id", loan_id,
                 "--run-id", run_id,
@@ -333,7 +333,7 @@ def main(argv=None) -> int:
         if ran_uw_decision:
             _phase("STEP12_UW_DECISION")
             step12_uw_cmd = [
-                "python3", _step("step12_analyze.py"),
+                sys.executable, _step("step12_analyze.py"),
                 "--tenant-id", tenant_id,
                 "--loan-id", loan_id,
                 "--run-id", run_id,

@@ -17,8 +17,12 @@ _SCRIPT_DIR = Path(__file__).resolve().parent.parent  # scripts/
 REPO_ROOT = _SCRIPT_DIR.parent  # repo root
 SCRIPTS_DIR = _SCRIPT_DIR
 
-_SYSTEMD_RUN: str | None = shutil.which("systemd-run")
-_TEMP_DIR = Path("/tmp")
+# systemd-run --scope --wait is unsupported on systemd 255 and --scope alone
+# requires interactive polkit auth the service user doesn't have.  Disable
+# the systemd path entirely; the Popen fallback handles streaming + timeout.
+_SYSTEMD_RUN: str | None = None
+_TEMP_DIR = REPO_ROOT / ".job_tmp"
+_TEMP_DIR.mkdir(exist_ok=True)
 
 
 def _job_unit_name(job_id: str) -> str:

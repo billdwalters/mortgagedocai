@@ -150,6 +150,8 @@ class JobService:
         timeout = request.get("timeout", JOB_TIMEOUT_DEFAULT)
         env = get_job_env(request)
 
+        _last_flush = [0.0]  # mutable container for closure; epoch seconds
+
         def _on_line(line: str) -> None:
             with self._lock:
                 if job_id in self._jobs:
@@ -157,6 +159,17 @@ class JobService:
                     self._jobs[job_id]["stdout"] = _truncate(
                         current + line, STDOUT_TRUNCATE
                     )
+                    # Flush to disk on PHASE lines (stepper progress) or every 5s
+                    # so the API (which reads from disk) can serve live progress.
+                    import time as _t
+                    now = _t.time()
+                    is_phase = line.startswith("PHASE:")
+                    if is_phase or now - _last_flush[0] >= 5.0:
+                        _last_flush[0] = now
+                        try:
+                            self._store.save(dict(self._jobs[job_id]))
+                        except Exception:
+                            pass
 
         try:
             returncode, stdout, stderr = self._runner.run(

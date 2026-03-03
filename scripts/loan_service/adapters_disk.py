@@ -443,9 +443,11 @@ class LoanLockImpl:
         base = self._get_base()
         return base / "tenants" / tenant_id / "loans" / loan_id / "_meta" / "locks" / "loan.lock"
 
-    def acquire(self, tenant_id: str, loan_id: str, job_id: str, created_at_utc: str) -> None:
+    def acquire(self, tenant_id: str, loan_id: str, job_id: str, created_at_utc: str,
+                max_wait_sec: int = 30) -> None:
         lock_path = self._lock_path(tenant_id, loan_id)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.time() + max_wait_sec
         while True:
             try:
                 fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -456,6 +458,16 @@ class LoanLockImpl:
                     os.close(fd)
                 return
             except FileExistsError:
+                if time.time() >= deadline:
+                    # Force-clear the stale lock and retry once
+                    try:
+                        lock_path.unlink()
+                    except OSError:
+                        pass
+                    raise RuntimeError(
+                        f"Loan lock held too long (>{max_wait_sec}s); "
+                        f"cleared stale lock for {tenant_id}/{loan_id}"
+                    )
                 time.sleep(LOCK_RETRY_SEC)
             except OSError as e:
                 raise RuntimeError(f"Could not acquire loan lock: {e}") from e

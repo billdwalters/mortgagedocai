@@ -93,9 +93,24 @@ def run_one_cycle(
             raise
         timeout = request.get("timeout", JOB_TIMEOUT_DEFAULT)
         env = get_job_env(request)
+        _last_flush = [0.0]
+
+        def _on_line(line: str) -> None:
+            current = job.get("stdout") or ""
+            job["stdout"] = _truncate(current + line, 64000)
+            now = time.time()
+            is_phase = line.startswith("PHASE:")
+            if is_phase or now - _last_flush[0] >= 5.0:
+                _last_flush[0] = now
+                try:
+                    store.save(job)
+                except Exception:
+                    pass
+
         try:
             returncode, stdout, stderr = runner.run(
-                request, tid, lid, env, timeout, job_id=jid
+                request, tid, lid, env, timeout,
+                on_stdout_line=_on_line, job_id=jid,
             )
         except subprocess.TimeoutExpired:
             job["status"] = "FAIL"
