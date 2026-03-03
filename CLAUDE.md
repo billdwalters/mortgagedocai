@@ -156,9 +156,16 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 
 ---
 
-## Recently Completed Work (as of 2026-02-26)
+## Recently Completed Work (as of 2026-03-03)
 
 All TDD (red → green → regression). 62 tests passing.
+
+### Web UI: Punch List #8, #11, #15 (2026-03-03)
+| Item | What was done |
+|------|--------------|
+| #8 inline feedback | Replaced 4 `alert()` calls with `showInlineMsg()`/`clearInlineMsg()` helpers; auto-clear 6s; new `<p id="inline-msg">` element |
+| #11 button disable | View Artifacts + Chat Send disable during async ops; `.btn-secondary:disabled` + `.chat-send-row button:disabled` CSS |
+| #15 timestamps | `formatTimestamp()` parses run_id + ISO formats → locale string; applied at 6 locations |
 
 ### Step12: `uw_conditions` profile hardening
 | Commit area | What was built |

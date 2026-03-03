@@ -160,7 +160,8 @@ body {
   font-size: 0.875rem;
   cursor: pointer;
 }
-.btn-secondary:hover { background: rgba(124, 58, 237, 0.1); }
+.btn-secondary:hover:not(:disabled) { background: rgba(124, 58, 237, 0.1); }
+.btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
 
 .btn-cta {
   padding: 0.6rem 1rem;
@@ -426,6 +427,95 @@ body {
   max-height: 320px;
 }
 
+/* ——— Markdown body (rendered .md artifacts) ——— */
+.markdown-body {
+  max-height: 500px;
+  overflow: auto;
+  padding: 1rem;
+  background: var(--bg);
+  border-radius: 4px;
+  margin: 0.25rem 0 0 0;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 1rem 0 0.5rem 0;
+  font-weight: 600;
+  color: var(--text);
+}
+.markdown-body h1 { font-size: 1.25rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.3rem; }
+.markdown-body h2 { font-size: 1.1rem; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 0.25rem; }
+.markdown-body h3 { font-size: 1rem; }
+.markdown-body h4 { font-size: 0.9rem; color: var(--muted); }
+.markdown-body p { margin: 0.5rem 0; }
+.markdown-body strong { font-weight: 700; }
+.markdown-body em { font-style: italic; }
+.markdown-body ul, .markdown-body ol {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+.markdown-body li { margin: 0.25rem 0; }
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.8125rem;
+}
+.markdown-body th {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  color: var(--muted);
+  font-weight: 600;
+}
+.markdown-body td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.markdown-body tr:hover td {
+  background: rgba(255,255,255,0.03);
+}
+.markdown-body code {
+  background: rgba(255,255,255,0.08);
+  padding: 0.15rem 0.35rem;
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+}
+.markdown-body pre {
+  background: rgba(255,255,255,0.05);
+  padding: 0.75rem;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+}
+.markdown-body blockquote {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+  background: rgba(255,255,255,0.03);
+  border-radius: 0 4px 4px 0;
+}
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  margin: 1rem 0;
+}
+.markdown-body a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.markdown-body a:hover { text-decoration: underline; }
+
 /* ——— Chat ——— */
 .chat-messages {
   min-height: 200px;
@@ -536,7 +626,8 @@ body {
   font-size: 0.875rem;
   cursor: pointer;
 }
-.chat-send-row button:hover { opacity: 0.9; }
+.chat-send-row button:hover:not(:disabled) { opacity: 0.9; }
+.chat-send-row button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ——— Source path validation feedback ——— */
 .source-validation-msg { font-size: 0.8125rem; margin: 0.25rem 0 0; }

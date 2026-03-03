@@ -1220,3 +1220,40 @@ cp /opt/mortgagedocai/policy_templates/uw_thresholds.example.json \
 | uw_decision | `outputs/profiles/uw_decision/decision.json` + `decision.md` |
 | version stamp | `outputs/_meta/version.json` |
 | retrieval pack | `nas_analyze/.../retrieve/<run_id>/retrieval_pack.json` |
+
+---
+
+## Web UI Polish — Punch List #8, #11, #15 (2026-03-03)
+
+Three frontend-only changes across `webui/app.js`, `webui/index.html`, and `webui/styles.css`. No backend changes.
+
+### #8: Replace alert() boxes with inline feedback
+
+All 4 `alert()` calls in app.js replaced with inline styled messages using `showInlineMsg(msg, type)` / `clearInlineMsg()` helpers. Messages appear near the action buttons in a `<p id="inline-msg">` element that reuses existing `.source-validation-msg` / `.source-validation-error` CSS classes. Auto-clears after 6 seconds.
+
+Replaced alerts:
+- Process Loan: no loan selected
+- Process Loan: no source path
+- Process Loan: API error
+- View Artifacts: no run selected
+
+### #11: Disable buttons during loading
+
+| Button | Before | After |
+|--------|--------|-------|
+| View Artifacts | No disable, no feedback | Disables + "Loading..." text, re-enables in finally |
+| Chat Send | No disable (spinner only) | Disables during processing, re-enables in finally + early-return paths |
+
+Added CSS: `.btn-secondary:disabled` (opacity 0.5, not-allowed) and `.chat-send-row button:disabled`. Updated `:hover` selectors to `:hover:not(:disabled)`.
+
+### #15: Human-readable timestamps
+
+Added `formatTimestamp(raw)` utility near existing `formatUSD()` / `formatPct()` / `formatDuration()`. Parses both run_id format (`2026-02-26T060725Z`) and standard ISO. Returns locale string like "Feb 26, 2026, 6:07 AM". Falls back to raw string on parse failure.
+
+Applied at 6 locations:
+1. Loan list — `last_processed_utc`
+2. Loan list — `source_last_modified_utc`
+3. Overview — "Last processed" (selectLoan + job success)
+4. Progress — Started / Finished
+5. Details — run_id display (raw + formatted in parens)
+6. Summary dashboard — `generated_at_utc`

@@ -66,6 +66,7 @@
           <button type="button" id="process-loan-btn" class="btn-cta">Process Loan</button>
           <button type="button" id="view-artifacts-btn" class="btn-secondary">View Artifacts</button>
         </div>
+        <p id="inline-msg" class="source-validation-msg" hidden></p>
 
         <div id="summary-dashboard" class="summary-dashboard" hidden>
           <div class="summary-grid">
@@ -123,6 +124,7 @@
         <div id="artifact-preview-wrap" class="artifact-preview-wrap" hidden>
           <h3>Preview</h3>
           <pre id="artifact-preview-content" class="scroll-box monospace"></pre>
+          <div id="artifact-preview-markdown" class="scroll-box markdown-body" hidden></div>
         </div>
       </section>
 
@@ -161,6 +163,7 @@
     </main>
   </div>
 
+  <script src="/ui/static/marked.min.js"></script>
   <script src="/ui/static/app.js"></script>
 </body>
 </html>

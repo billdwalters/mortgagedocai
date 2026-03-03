@@ -280,6 +280,23 @@
     if (msgEl) { msgEl.hidden = true; msgEl.textContent = ""; }
   }
 
+  // ——— Inline feedback (replaces alert() boxes) ———
+  var _inlineMsgTimer = null;
+  function showInlineMsg(msg, type) {
+    var msgEl = el("inline-msg");
+    if (!msgEl) return;
+    if (_inlineMsgTimer) { clearTimeout(_inlineMsgTimer); _inlineMsgTimer = null; }
+    msgEl.textContent = msg;
+    msgEl.className = "source-validation-msg source-validation-" + type;
+    msgEl.hidden = false;
+    _inlineMsgTimer = setTimeout(function () { clearInlineMsg(); }, 6000);
+  }
+  function clearInlineMsg() {
+    var msgEl = el("inline-msg");
+    if (msgEl) { msgEl.hidden = true; msgEl.textContent = ""; }
+    if (_inlineMsgTimer) { clearTimeout(_inlineMsgTimer); _inlineMsgTimer = null; }
+  }
+
   async function validateSourcePath(tenant, loanId, sourcePath) {
     var url = "/tenants/" + encodeURIComponent(tenant) + "/loans/" + encodeURIComponent(loanId) + "/source_path/validate";
     var res = await apiFetch(url, {
@@ -326,13 +343,13 @@
         const li = document.createElement("li");
         li.className = "loan-item";
         li.dataset.loanId = it.loan_id;
-        const lastText = (it.last_processed_utc != null && it.last_processed_utc !== "") ? it.last_processed_utc : "Never";
+        const lastText = (it.last_processed_utc != null && it.last_processed_utc !== "") ? formatTimestamp(it.last_processed_utc) : "Never";
         const badge = it.needs_reprocess ? "Needs Processing" : "Up to date";
         const badgeClass = it.needs_reprocess ? "loan-badge needs-processing" : "loan-badge up-to-date";
         li.innerHTML =
           "<span class=\"loan-id\">" + escapeHtml(it.loan_id) + "</span>" +
           "<span class=\"loan-folder-name small\">" + escapeHtml(it.folder_name || "") + "</span>" +
-          "<span class=\"loan-meta small\">Source: " + escapeHtml(it.source_last_modified_utc || "") + "</span>" +
+          "<span class=\"loan-meta small\">Source: " + escapeHtml(formatTimestamp(it.source_last_modified_utc || "")) + "</span>" +
           "<span class=\"loan-meta small\">Processed: " + escapeHtml(lastText) + "</span>" +
           "<span class=\"" + badgeClass + "\">" + escapeHtml(badge) + "</span>";
         li.addEventListener("click", function () {
@@ -395,7 +412,7 @@
       if (pathInput) pathInput.value = item.source_path;
       if (display) display.textContent = item.source_path;
       setSourcePathForLoan(loanId, item.source_path);
-      if (el("overview-last-processed")) el("overview-last-processed").textContent = (item.last_processed_utc != null && item.last_processed_utc !== "") ? item.last_processed_utc : "Never";
+      if (el("overview-last-processed")) el("overview-last-processed").textContent = (item.last_processed_utc != null && item.last_processed_utc !== "") ? formatTimestamp(item.last_processed_utc) : "Never";
       if (item.last_processed_run_id) selectedRunId = item.last_processed_run_id;
     } else {
       const storedPath = getSourcePathForLoan(loanId);
@@ -416,7 +433,7 @@
     }
     if (pathInput) pathInput.placeholder = "/mnt/source_loans/.../Folder [Loan 123]";
     const detailsRun = el("details-run-id");
-    if (detailsRun) detailsRun.textContent = selectedRunId ? "run_id: " + selectedRunId : "";
+    if (detailsRun) detailsRun.textContent = selectedRunId ? "run_id: " + selectedRunId + " (" + formatTimestamp(selectedRunId) + ")" : "";
     updateProcessLoanButton();
     loadSummaryDashboard(loanId, selectedRunId);
   }
@@ -504,14 +521,15 @@
     const btn = el("process-loan-btn");
     if (!btn) return;
     btn.addEventListener("click", async function () {
+      clearInlineMsg();
       if (!selectedLoanId) {
-        alert("Select a loan first.");
+        showInlineMsg("Select a loan first.", "error");
         return;
       }
       const pathInput = el("source-path-input");
       const sourcePath = (pathInput && pathInput.value) ? pathInput.value.trim() : "";
       if (!sourcePath) {
-        alert("Set the source folder (click Change…) and try again.");
+        showInlineMsg("Set the source folder (click Change\u2026) and try again.", "error");
         return;
       }
       const tenant = getTenantId();
@@ -564,14 +582,14 @@
         currentJobId = data.job_id || null;
         selectedRunId = data.run_id || selectedRunId;
         if (selectedRunId && selectedLoanId) lastProcessedCache[selectedLoanId] = { run_id: selectedRunId, generated_at_utc: selectedRunId };
-        if (el("details-run-id")) el("details-run-id").textContent = "run_id: " + (data.run_id || "");
+        if (el("details-run-id")) el("details-run-id").textContent = data.run_id ? "run_id: " + data.run_id + " (" + formatTimestamp(data.run_id) + ")" : "";
         _jobActive = true;
         updateProcessLoanButton();
         hideSummaryDashboard();
         showProgressPanel();
         startJobPolling(data.job_id);
       } catch (err) {
-        alert("Error: " + (err.message || err));
+        showInlineMsg("Error: " + (err.message || err), "error");
       }
     });
   })();
@@ -656,8 +674,8 @@
     function setJobFields(job) {
       if (!job) return;
       if (el("progress-status-value")) el("progress-status-value").textContent = job.status || "—";
-      if (el("progress-started")) el("progress-started").textContent = (job.started_at_utc || "—");
-      if (el("progress-finished")) el("progress-finished").textContent = (job.finished_at_utc || "—");
+      if (el("progress-started")) el("progress-started").textContent = formatTimestamp(job.started_at_utc || "—");
+      if (el("progress-finished")) el("progress-finished").textContent = formatTimestamp(job.finished_at_utc || "—");
       const stdout = job.stdout != null ? job.stdout : "";
       if (el("log-stdout")) el("log-stdout").textContent = stdout || "(empty)";
       if (el("log-stderr")) el("log-stderr").textContent = (job.stderr != null ? job.stderr : "") || "(empty)";
@@ -705,8 +723,8 @@
             if (status === "SUCCESS" && job.run_id && selectedLoanId) {
               selectedRunId = job.run_id;
               lastProcessedCache[selectedLoanId] = { run_id: job.run_id, generated_at_utc: job.run_id };
-              if (el("overview-last-processed")) el("overview-last-processed").textContent = job.run_id;
-              if (el("details-run-id")) el("details-run-id").textContent = "run_id: " + job.run_id;
+              if (el("overview-last-processed")) el("overview-last-processed").textContent = formatTimestamp(job.run_id);
+              if (el("details-run-id")) el("details-run-id").textContent = "run_id: " + job.run_id + " (" + formatTimestamp(job.run_id) + ")";
               loadSummaryDashboard(selectedLoanId, job.run_id);
             }
           }
@@ -733,6 +751,21 @@
     poll();
   }
 
+  // ——— Markdown rendering helper ———
+  function renderMarkdownSafe(md) {
+    if (typeof marked === "undefined" || !marked.parse) return null;
+    var html = marked.parse(md, { gfm: true, breaks: true });
+    var tmp = document.createElement("div");
+    tmp.innerHTML = html;
+    tmp.querySelectorAll("script, iframe").forEach(function (el) { el.remove(); });
+    tmp.querySelectorAll("*").forEach(function (node) {
+      Array.from(node.attributes).forEach(function (attr) {
+        if (attr.name.toLowerCase().startsWith("on")) node.removeAttribute(attr.name);
+      });
+    });
+    return tmp.innerHTML;
+  }
+
   // ——— View Artifacts ———
   (function initViewArtifacts() {
     const btn = el("view-artifacts-btn");
@@ -740,13 +773,17 @@
     const indexEl = el("artifacts-index");
     const previewWrap = el("artifact-preview-wrap");
     const previewContent = el("artifact-preview-content");
+    const previewMarkdown = el("artifact-preview-markdown");
     if (!btn || !panel || !indexEl) return;
     btn.addEventListener("click", async function () {
+      clearInlineMsg();
       const runId = selectedRunId || (selectedLoanId && lastProcessedCache[selectedLoanId] && lastProcessedCache[selectedLoanId].run_id);
       if (!selectedLoanId || !runId) {
-        alert("No run selected. Process a loan first or select a loan that has been processed.");
+        showInlineMsg("No run selected. Process a loan first or select a loan that has been processed.", "error");
         return;
       }
+      btn.disabled = true;
+      btn.textContent = "Loading\u2026";
       panel.hidden = false;
       if (previewWrap) previewWrap.hidden = true;
       indexEl.innerHTML = "";
@@ -783,8 +820,21 @@
             const url = a.getAttribute("data-url");
             const filename = a.getAttribute("data-filename") || "";
             if (!url || !previewContent || !previewWrap) return;
+            // Reset both containers
+            previewContent.textContent = "";
+            previewContent.hidden = false;
+            if (previewMarkdown) { previewMarkdown.innerHTML = ""; previewMarkdown.hidden = true; }
             apiFetch(url).then(function (r) { return r.text(); }).then(function (text) {
-              if (filename.endsWith(".json")) {
+              if (filename.endsWith(".md")) {
+                var rendered = renderMarkdownSafe(text);
+                if (rendered !== null && previewMarkdown) {
+                  previewContent.hidden = true;
+                  previewMarkdown.innerHTML = rendered;
+                  previewMarkdown.hidden = false;
+                } else {
+                  previewContent.textContent = text;
+                }
+              } else if (filename.endsWith(".json")) {
                 try {
                   previewContent.textContent = JSON.stringify(JSON.parse(text), null, 2);
                 } catch (_) {
@@ -796,12 +846,17 @@
               previewWrap.hidden = false;
             }).catch(function (err) {
               previewContent.textContent = "Error: " + (err.message || err);
+              previewContent.hidden = false;
+              if (previewMarkdown) previewMarkdown.hidden = true;
               previewWrap.hidden = false;
             });
           });
         });
       } catch (e) {
         indexEl.innerHTML = "<p class=\"muted\">Error: " + escapeHtml(e.message || e) + "</p>";
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "View Artifacts";
       }
     });
   })();
@@ -824,6 +879,18 @@
     var m = Math.floor(s / 60);
     var rem = s - m * 60;
     return m + "m " + rem.toFixed(0) + "s";
+  }
+
+  /** Parse run_id-style (2026-02-26T060725Z) or ISO timestamps and return locale string. */
+  function formatTimestamp(raw) {
+    if (raw == null || raw === "" || raw === "—" || raw === "Never" || raw === "Unknown") return raw || "—";
+    var s = String(raw).trim();
+    // run_id format: 2026-02-26T060725Z → 2026-02-26T06:07:25Z
+    var m = s.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+    if (m) s = m[1] + "T" + m[2] + ":" + m[3] + ":" + m[4] + "Z";
+    var d = new Date(s);
+    if (isNaN(d.getTime())) return String(raw);
+    return d.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
   }
 
   function fetchArtifactJson(tenant, loan, run, profile, filename) {
@@ -993,7 +1060,7 @@
     var sCls = status === "SUCCESS" ? "success" : "fail";
     var html = "<div style=\"display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.5rem\">" +
       "<span class=\"summary-status-badge " + sCls + "\">" + escapeHtml(status) + "</span>" +
-      "<span class=\"muted\" style=\"font-size:0.8125rem\">" + escapeHtml(manifest.generated_at_utc || "") + "</span>" +
+      "<span class=\"muted\" style=\"font-size:0.8125rem\">" + escapeHtml(formatTimestamp(manifest.generated_at_utc || "")) + "</span>" +
       "</div>";
 
     // Output files available
@@ -1283,8 +1350,10 @@
     async function sendQuestion() {
       const question = (inputEl && inputEl.value) ? inputEl.value.trim() : "";
       if (!question) return;
+      if (sendBtn) sendBtn.disabled = true;
       if (!selectedLoanId) {
         appendMessage("assistant", "Select a loan first.");
+        if (sendBtn) sendBtn.disabled = false;
         return;
       }
       // Use the run shown in the UI (from loan list or last job) so we don't hit a stale cached run_id
@@ -1292,6 +1361,7 @@
       if (!runId) runId = await getLatestSuccessRunId();
       if (!runId) {
         appendMessage("assistant", "No successful run for this loan. Process the loan first.");
+        if (sendBtn) sendBtn.disabled = false;
         return;
       }
       appendMessage("user", question);
@@ -1350,6 +1420,7 @@
         appendMessage("assistant", "Error: " + (e.message || e));
       } finally {
         if (processingEl) processingEl.hidden = true;
+        if (sendBtn) sendBtn.disabled = false;
       }
     }
 

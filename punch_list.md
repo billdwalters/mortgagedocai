@@ -28,8 +28,9 @@ No visibility into which documents were ingested, page counts, or if expected do
 
 ## Web UI — Medium Impact
 
-### 8. Replace alert() boxes with inline feedback
-Errors currently trigger browser alert() popups (blocking, ugly). Replace with inline styled messages using the existing `.source-validation-msg` pattern.
+### ~~8. Replace alert() boxes with inline feedback~~ DONE (2026-03-03)
+~~Errors currently trigger browser alert() popups (blocking, ugly). Replace with inline styled messages using the existing `.source-validation-msg` pattern.~~
+Replaced all 4 `alert()` calls with `showInlineMsg()`/`clearInlineMsg()` helpers. Auto-clears after 6s. Uses existing `.source-validation-msg` CSS classes.
 
 ### 9. Show processing duration and per-step timing
 Job records have `started_at_utc` and `finished_at_utc` but UI doesn't display elapsed time. PHASE markers could also show per-step duration (Intake: 5s, Process: 45s, etc.).
@@ -37,8 +38,9 @@ Job records have `started_at_utc` and `finished_at_utc` but UI doesn't display e
 ### 10. Artifact file metadata
 API returns `size_bytes` and `mtime_utc` for each artifact file but UI ignores them. Show file size and "updated 2 minutes ago" timestamps.
 
-### 11. Disable buttons during loading + spinner feedback
-Refresh Loans and Process Loan buttons don't disable while working. No spinner or loading message shown during async operations.
+### ~~11. Disable buttons during loading + spinner feedback~~ DONE (2026-03-03)
+~~Refresh Loans and Process Loan buttons don't disable while working. No spinner or loading message shown during async operations.~~
+View Artifacts: disables + shows "Loading..." during fetch, re-enables in finally. Chat Send: disables during processing, re-enables in finally and early-return paths. Added `.btn-secondary:disabled` and `.chat-send-row button:disabled` CSS rules.
 
 ### 12. Better empty states
 If no loans found, the loan list is blank. Show "No loans found. Check your settings and connection." Same for empty artifact lists, empty chat, etc.
@@ -49,8 +51,9 @@ Don't offer a profile in the chat dropdown if it hasn't been run yet for this lo
 ### 14. Copy to clipboard on JSON preview
 Add a copy button to artifact preview panels so users can grab JSON without selecting text.
 
-### 15. Human-readable timestamps
-Show "Last processed: 3 days ago" or "Feb 26, 2026 at 6:07 AM" instead of raw run_id format like `2026-02-26T060725Z`.
+### ~~15. Human-readable timestamps~~ DONE (2026-03-03)
+~~Show "Last processed: 3 days ago" or "Feb 26, 2026 at 6:07 AM" instead of raw run_id format like `2026-02-26T060725Z`.~~
+Added `formatTimestamp()` utility that parses both run_id style (`2026-02-26T060725Z`) and ISO. Applied at all 6 locations: loan list (2), overview last-processed (2), progress started/finished, summary dashboard generated_at_utc. Details run_id shows raw + formatted in parens.
 
 ---
 
