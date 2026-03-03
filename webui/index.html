@@ -66,6 +66,36 @@
           <button type="button" id="process-loan-btn" class="btn-cta">Process Loan</button>
           <button type="button" id="view-artifacts-btn" class="btn-secondary">View Artifacts</button>
         </div>
+
+        <div id="summary-dashboard" class="summary-dashboard" hidden>
+          <div class="summary-grid">
+            <div id="summary-decision" class="summary-card summary-card-wide">
+              <h3 class="summary-card-title">Underwriting Decision</h3>
+              <div id="summary-decision-body" class="summary-card-body">
+                <p class="muted">Not available</p>
+              </div>
+            </div>
+            <div id="summary-dti" class="summary-card">
+              <h3 class="summary-card-title">DTI Analysis</h3>
+              <div id="summary-dti-body" class="summary-card-body">
+                <p class="muted">Not available</p>
+              </div>
+            </div>
+            <div id="summary-income" class="summary-card">
+              <h3 class="summary-card-title">Income Breakdown</h3>
+              <div id="summary-income-body" class="summary-card-body">
+                <p class="muted">Not available</p>
+              </div>
+            </div>
+            <div id="summary-run" class="summary-card summary-card-wide">
+              <h3 class="summary-card-title">Processing Details</h3>
+              <div id="summary-run-body" class="summary-card-body">
+                <p class="muted">Not available</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <p id="source-validation-msg" class="source-validation-msg" hidden></p>
         <details id="details-expand" class="details-expand">
           <summary>Details</summary>
@@ -94,6 +124,12 @@
           <h3>Preview</h3>
           <pre id="artifact-preview-content" class="scroll-box monospace"></pre>
         </div>
+      </section>
+
+      <section id="conditions-panel" class="section conditions-panel" hidden>
+        <h2>Conditions</h2>
+        <div id="conditions-summary" class="conditions-summary"></div>
+        <div id="conditions-list" class="conditions-list"></div>
       </section>
 
       <section id="chat-panel" class="section chat-panel">

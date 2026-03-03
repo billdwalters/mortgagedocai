@@ -22,7 +22,7 @@
   const STORAGE_BASE_URL = "mortgagedocai_base_url";
   const SOURCE_PATH_PREFIX = "mortgagedocai_source_path_";
   const POLL_INTERVAL_MS = 2000;
-  const STALL_MS = 120000;   // 2 min without job-state change → stale
+  const STALL_MS = 900000;   // 15 min without job-state change → stale (CPU-only servers are slow)
   const MAX_FAILURES = 10;   // consecutive poll failures → stop
 
   /** Run ID heuristic: looks like timestamp (contains T, ends with Z) or matches YYYY-MM-DDTHH... */
@@ -359,9 +359,14 @@
     }
   }
 
+  var _jobActive = false;
+
   function updateProcessLoanButton() {
     const btn = el("process-loan-btn");
-    if (btn) btn.disabled = !selectedLoanId;
+    if (btn) {
+      btn.disabled = !selectedLoanId || _jobActive;
+      btn.textContent = _jobActive ? "Processing…" : "Process Loan";
+    }
   }
 
   function escapeHtml(s) {
@@ -373,6 +378,7 @@
   function hideMainOverview() {
     const main = el("main-overview");
     if (main) main.hidden = true;
+    hideSummaryDashboard();
   }
 
   async function selectLoan(loanId) {
@@ -412,6 +418,7 @@
     const detailsRun = el("details-run-id");
     if (detailsRun) detailsRun.textContent = selectedRunId ? "run_id: " + selectedRunId : "";
     updateProcessLoanButton();
+    loadSummaryDashboard(loanId, selectedRunId);
   }
 
   // ——— Source path edit and browse ———
@@ -558,6 +565,9 @@
         selectedRunId = data.run_id || selectedRunId;
         if (selectedRunId && selectedLoanId) lastProcessedCache[selectedLoanId] = { run_id: selectedRunId, generated_at_utc: selectedRunId };
         if (el("details-run-id")) el("details-run-id").textContent = "run_id: " + (data.run_id || "");
+        _jobActive = true;
+        updateProcessLoanButton();
+        hideSummaryDashboard();
         showProgressPanel();
         startJobPolling(data.job_id);
       } catch (err) {
@@ -680,6 +690,8 @@
             if (Date.now() - lastChangeAtMs > STALL_MS) {
               showPollWarning("Job appears stalled (no progress updates for 2m).");
               stopPolling();
+              _jobActive = false;
+              updateProcessLoanButton();
             }
           }
 
@@ -688,11 +700,14 @@
 
           if (status === "SUCCESS" || status === "FAIL") {
             stopPolling();
+            _jobActive = false;
+            updateProcessLoanButton();
             if (status === "SUCCESS" && job.run_id && selectedLoanId) {
               selectedRunId = job.run_id;
               lastProcessedCache[selectedLoanId] = { run_id: job.run_id, generated_at_utc: job.run_id };
               if (el("overview-last-processed")) el("overview-last-processed").textContent = job.run_id;
               if (el("details-run-id")) el("details-run-id").textContent = "run_id: " + job.run_id;
+              loadSummaryDashboard(selectedLoanId, job.run_id);
             }
           }
         })
@@ -704,6 +719,8 @@
               "Connection lost to server \u2014 polling stopped. Check VPN/Tailscale or API service."
             );
             stopPolling();
+            _jobActive = false;
+            updateProcessLoanButton();
           } else if (consecutiveFailures >= 3 || sinceLastOk > 15000) {
             showPollWarning(
               "Connection issues detected \u2014 retrying in background. Check VPN/Tailscale or API service."
@@ -788,6 +805,374 @@
       }
     });
   })();
+
+  // ——— Summary Dashboard ———
+  var _dashboardRenderSeq = 0;
+
+  function formatUSD(v) {
+    if (v == null || isNaN(v)) return "—";
+    return "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  function formatPct(v) {
+    if (v == null || isNaN(v)) return "—";
+    return (Number(v) * 100).toFixed(1) + "%";
+  }
+  function formatDuration(sec) {
+    if (sec == null || isNaN(sec)) return "—";
+    var s = Number(sec);
+    if (s < 60) return s.toFixed(1) + "s";
+    var m = Math.floor(s / 60);
+    var rem = s - m * 60;
+    return m + "m " + rem.toFixed(0) + "s";
+  }
+
+  function fetchArtifactJson(tenant, loan, run, profile, filename) {
+    var path = "/tenants/" + encodeURIComponent(tenant) + "/loans/" + encodeURIComponent(loan) +
+      "/runs/" + encodeURIComponent(run) + "/artifacts/" + encodeURIComponent(profile) + "/" + encodeURIComponent(filename);
+    return apiFetch(path).then(function (r) {
+      if (!r.ok) return null;
+      return r.json();
+    }).catch(function () { return null; });
+  }
+
+  function fetchRunManifest(tenant, loan, run) {
+    var path = "/tenants/" + encodeURIComponent(tenant) + "/loans/" + encodeURIComponent(loan) +
+      "/runs/" + encodeURIComponent(run);
+    return apiJson(path).catch(function () { return null; });
+  }
+
+  function renderDecisionCard(d, conditionsData) {
+    if (!d) return "<p class=\"muted\">Not available</p>";
+    var dp = d.decision_primary || {};
+    var status = (dp.status || "UNKNOWN").toUpperCase();
+    var cls = status === "PASS" ? "pass" : status === "FAIL" ? "fail" : "unknown";
+    var conf = d.confidence != null ? " (" + formatPct(d.confidence) + " conf)" : "";
+    var program = (d.ruleset && d.ruleset.program) ? d.ruleset.program.replace(/_/g, " ") : "";
+    var html = "<div class=\"summary-decision-row\">" +
+      "<span class=\"summary-decision-badge " + cls + "\">" + escapeHtml(status) + "</span>" +
+      "<span class=\"summary-decision-meta\">" + escapeHtml(program) + conf + "</span>" +
+      "</div>";
+
+    // DTI summary from inputs
+    var inp = d.inputs || {};
+    var dtiP = inp.dti_primary || {};
+    if (dtiP.back_end != null) {
+      var thresh = (d.ruleset && d.ruleset.thresholds && d.ruleset.thresholds.max_back_end_dti) || null;
+      var dtiStr = "Back-end DTI: " + formatPct(dtiP.back_end);
+      if (thresh != null) dtiStr += " (max " + formatPct(thresh) + ")";
+      html += "<p style=\"margin:0.35rem 0 0;font-size:0.8125rem;color:var(--muted)\">" + escapeHtml(dtiStr) + "</p>";
+    }
+
+    // Condition count
+    var conds = (conditionsData && Array.isArray(conditionsData.conditions)) ? conditionsData.conditions : [];
+    if (conds.length > 0) {
+      var catCounts = {};
+      conds.forEach(function (c) {
+        var cat = c.category || "Other";
+        catCounts[cat] = (catCounts[cat] || 0) + 1;
+      });
+      var breakdownParts = [];
+      Object.keys(catCounts).forEach(function (cat) {
+        breakdownParts.push(catCounts[cat] + " " + cat);
+      });
+      html += "<div class=\"summary-condition-count\">" +
+        "<span class=\"count-badge\">" + conds.length + " condition" + (conds.length !== 1 ? "s" : "") + "</span>" +
+        "<span class=\"count-breakdown\">" + escapeHtml(breakdownParts.join(", ")) + "</span>" +
+        "</div>";
+      html += "<button type=\"button\" class=\"summary-conditions-link\" onclick=\"document.getElementById('conditions-panel').scrollIntoView({behavior:'smooth'})\">" +
+        "View Conditions (" + conds.length + ")</button>";
+    }
+
+    // Rules table
+    var reasons = dp.reasons || [];
+    if (reasons.length > 0) {
+      html += "<table class=\"summary-rules-table\"><thead><tr><th>Rule</th><th>Value</th><th>Threshold</th><th>Result</th></tr></thead><tbody>";
+      reasons.forEach(function (r) {
+        var rCls = (r.status || "").toUpperCase() === "PASS" ? "rule-pass" : "rule-fail";
+        html += "<tr><td>" + escapeHtml(r.rule || "") + "</td>" +
+          "<td>" + formatPct(r.value) + "</td>" +
+          "<td>" + formatPct(r.threshold) + "</td>" +
+          "<td class=\"" + rCls + "\">" + escapeHtml((r.status || "").toUpperCase()) + "</td></tr>";
+      });
+      html += "</tbody></table>";
+    }
+
+    // Missing inputs
+    var missing = dp.missing_inputs || [];
+    if (missing.length > 0) {
+      html += "<p style=\"margin:0.5rem 0 0;font-size:0.8125rem;color:var(--warn)\">Missing: " + escapeHtml(missing.join(", ")) + "</p>";
+    }
+    return html;
+  }
+
+  function _dtiBar(label, value, maxThreshold) {
+    if (value == null) return "";
+    var pct = Math.min(Number(value) * 100, 100);
+    var max = maxThreshold ? Number(maxThreshold) * 100 : 50;
+    var widthPct = Math.min((pct / max) * 100, 100);
+    var fillCls = (maxThreshold && value > maxThreshold) ? "over" : "ok";
+    return "<div class=\"summary-dti-row\">" +
+      "<span class=\"summary-dti-label\">" + escapeHtml(label) + "</span>" +
+      "<div class=\"summary-dti-bar-track\">" +
+        "<div class=\"summary-dti-bar-fill " + fillCls + "\" style=\"width:" + widthPct.toFixed(1) + "%\"></div>" +
+      "</div>" +
+      "<span class=\"summary-dti-value\">" + formatPct(value) + "</span>" +
+      "</div>";
+  }
+
+  function renderDtiCard(dti) {
+    if (!dti) return "<p class=\"muted\">Not available</p>";
+    var html = "";
+    html += _dtiBar("Front-end", dti.front_end_dti, 0.28);
+    html += _dtiBar("Back-end", dti.back_end_dti, 0.45);
+    if (dti.front_end_dti_combined != null) {
+      html += _dtiBar("Front (comb)", dti.front_end_dti_combined, 0.28);
+    }
+    if (dti.back_end_dti_combined != null) {
+      html += _dtiBar("Back (comb)", dti.back_end_dti_combined, 0.45);
+    }
+    html += "<div style=\"margin-top:0.5rem\">";
+    html += "<div class=\"summary-financial-row\"><span class=\"summary-financial-label\">PITIA</span><span class=\"summary-financial-value\">" + formatUSD(dti.housing_payment_used) + "</span></div>";
+    html += "<div class=\"summary-financial-row\"><span class=\"summary-financial-label\">Debt</span><span class=\"summary-financial-value\">" + formatUSD(dti.monthly_debt_total) + "</span></div>";
+    html += "<div class=\"summary-financial-row\"><span class=\"summary-financial-label\">Income</span><span class=\"summary-financial-value\">" + formatUSD(dti.monthly_income_total) + "</span></div>";
+    if (dti.monthly_income_combined != null) {
+      html += "<div class=\"summary-financial-row\"><span class=\"summary-financial-label\">Income (comb)</span><span class=\"summary-financial-value\">" + formatUSD(dti.monthly_income_combined) + "</span></div>";
+    }
+    html += "</div>";
+
+    // Missing inputs
+    var missing = dti.missing_inputs || [];
+    if (missing.length > 0) {
+      html += "<p style=\"margin:0.5rem 0 0;font-size:0.8125rem;color:var(--warn)\">Missing: " + escapeHtml(missing.join(", ")) + "</p>";
+    }
+    return html;
+  }
+
+  function renderIncomeCard(inc) {
+    if (!inc) return "<p class=\"muted\">Not available</p>";
+    var html = "";
+
+    // Totals
+    var incTotal = (inc.monthly_income_total && inc.monthly_income_total.value != null) ? inc.monthly_income_total.value : null;
+    var incCombined = (inc.monthly_income_total_combined && inc.monthly_income_total_combined.value != null) ? inc.monthly_income_total_combined.value : null;
+    var liabTotal = (inc.monthly_liabilities_total && inc.monthly_liabilities_total.value != null) ? inc.monthly_liabilities_total.value : null;
+    var pitia = (inc.proposed_pitia && inc.proposed_pitia.value != null) ? inc.proposed_pitia.value : null;
+
+    html += "<div class=\"summary-financial-row\"><span class=\"summary-financial-label\">Income</span><span class=\"summary-financial-value\">" + formatUSD(incTotal) + "/mo</span></div>";
+    if (incCombined != null) {
+      html += "<div class=\"summary-financial-row\"><span class=\"summary-financial-label\">Combined</span><span class=\"summary-financial-value\">" + formatUSD(incCombined) + "/mo</span></div>";
+    }
+    html += "<div class=\"summary-financial-row\"><span class=\"summary-financial-label\">Liabilities</span><span class=\"summary-financial-value\">" + formatUSD(liabTotal) + "/mo</span></div>";
+    html += "<div class=\"summary-financial-row\"><span class=\"summary-financial-label\">PITIA</span><span class=\"summary-financial-value\">" + formatUSD(pitia) + "</span></div>";
+
+    // Income items
+    var items = inc.income_items || [];
+    if (items.length > 0) {
+      html += "<h4 style=\"margin:0.5rem 0 0.25rem;font-size:0.75rem;color:var(--muted);text-transform:uppercase\">Sources</h4>";
+      items.forEach(function (it) {
+        var amt = it.amount != null ? formatUSD(it.amount) : "—";
+        var freq = it.frequency ? " /" + it.frequency.replace("monthly", "mo").replace("annual", "yr") : "";
+        html += "<div class=\"summary-financial-row\"><span class=\"summary-financial-label\">" + escapeHtml(it.description || "Unknown") + "</span><span class=\"summary-financial-value\">" + amt + freq + "</span></div>";
+      });
+    }
+
+    // Liability items
+    var liabs = inc.liability_items || [];
+    if (liabs.length > 0) {
+      html += "<h4 style=\"margin:0.5rem 0 0.25rem;font-size:0.75rem;color:var(--muted);text-transform:uppercase\">Liabilities</h4>";
+      liabs.forEach(function (it) {
+        html += "<div class=\"summary-financial-row\"><span class=\"summary-financial-label\">" + escapeHtml(it.description || "Unknown") + "</span><span class=\"summary-financial-value\">" + formatUSD(it.payment_monthly) + "/mo</span></div>";
+      });
+    }
+    return html;
+  }
+
+  function renderRunCard(manifest) {
+    if (!manifest) return "<p class=\"muted\">Not available</p>";
+    var status = (manifest.status || "UNKNOWN").toUpperCase();
+    var sCls = status === "SUCCESS" ? "success" : "fail";
+    var html = "<div style=\"display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.5rem\">" +
+      "<span class=\"summary-status-badge " + sCls + "\">" + escapeHtml(status) + "</span>" +
+      "<span class=\"muted\" style=\"font-size:0.8125rem\">" + escapeHtml(manifest.generated_at_utc || "") + "</span>" +
+      "</div>";
+
+    // Output files available
+    var outputs = manifest.outputs || {};
+    var outLines = [];
+    Object.keys(outputs).forEach(function (k) {
+      if (outputs[k]) {
+        var label = k.replace(/_json$/, "").replace(/_/g, " ");
+        outLines.push(label);
+      }
+    });
+    if (outLines.length > 0) {
+      html += "<p style=\"margin:0;font-size:0.8125rem\"><strong>Outputs:</strong> " + escapeHtml(outLines.join(", ")) + "</p>";
+    }
+
+    // Options summary
+    var opts = manifest.options || {};
+    var optParts = [];
+    if (opts.run_llm) optParts.push("LLM");
+    if (opts.offline_embeddings) optParts.push("Offline Embed");
+    if (opts.top_k) optParts.push("top_k=" + opts.top_k);
+    if (opts.max_per_file) optParts.push("max_per_file=" + opts.max_per_file);
+    if (optParts.length > 0) {
+      html += "<p style=\"margin:0.25rem 0 0;font-size:0.8125rem;color:var(--muted)\">" + escapeHtml(optParts.join(" · ")) + "</p>";
+    }
+
+    // Error info
+    if (manifest.error) {
+      html += "<p style=\"margin:0.5rem 0 0;font-size:0.8125rem;color:var(--error)\">" + escapeHtml(manifest.error) + "</p>";
+    }
+    if (manifest.failed_step) {
+      html += "<p style=\"margin:0.25rem 0 0;font-size:0.8125rem;color:var(--error)\">Failed at: " + escapeHtml(manifest.failed_step) + "</p>";
+    }
+    return html;
+  }
+
+  function loadSummaryDashboard(loanId, runId) {
+    var dashEl = el("summary-dashboard");
+    if (!dashEl) return;
+    if (!loanId || !runId) {
+      dashEl.hidden = true;
+      hideConditionsPanel();
+      return;
+    }
+    var seq = ++_dashboardRenderSeq;
+    var tenant = getTenantId();
+
+    // Fire all 5 fetches in parallel
+    Promise.allSettled([
+      fetchArtifactJson(tenant, loanId, runId, "uw_decision", "decision.json"),
+      fetchArtifactJson(tenant, loanId, runId, "income_analysis", "dti.json"),
+      fetchArtifactJson(tenant, loanId, runId, "income_analysis", "income_analysis.json"),
+      fetchRunManifest(tenant, loanId, runId),
+      fetchArtifactJson(tenant, loanId, runId, "uw_conditions", "conditions.json"),
+    ]).then(function (results) {
+      // Guard: user may have switched loans
+      if (seq !== _dashboardRenderSeq) return;
+      if (selectedLoanId !== loanId) return;
+
+      var decision   = results[0].status === "fulfilled" ? results[0].value : null;
+      var dti        = results[1].status === "fulfilled" ? results[1].value : null;
+      var income     = results[2].status === "fulfilled" ? results[2].value : null;
+      var manifest   = results[3].status === "fulfilled" ? results[3].value : null;
+      var conditions = results[4].status === "fulfilled" ? results[4].value : null;
+
+      // If every fetch returned null, hide entire dashboard
+      if (!decision && !dti && !income && !manifest) {
+        dashEl.hidden = true;
+        hideConditionsPanel();
+        return;
+      }
+
+      var decBody = el("summary-decision-body");
+      var dtiBody = el("summary-dti-body");
+      var incBody = el("summary-income-body");
+      var runBody = el("summary-run-body");
+
+      if (decBody) decBody.innerHTML = renderDecisionCard(decision, conditions);
+      if (dtiBody) dtiBody.innerHTML = renderDtiCard(dti);
+      if (incBody) incBody.innerHTML = renderIncomeCard(income);
+      if (runBody) runBody.innerHTML = renderRunCard(manifest);
+
+      dashEl.hidden = false;
+
+      // Populate conditions panel
+      renderConditionsPanel(conditions);
+    });
+  }
+
+  function hideSummaryDashboard() {
+    var dashEl = el("summary-dashboard");
+    if (dashEl) dashEl.hidden = true;
+    hideConditionsPanel();
+  }
+
+  // ——— Conditions Panel ———
+  var _TIMING_BADGE_CLASS = {
+    "Prior to Docs": "prior-docs",
+    "Prior to Closing": "prior-closing",
+    "Post Closing": "post-closing",
+  };
+
+  function hideConditionsPanel() {
+    var panel = el("conditions-panel");
+    if (panel) panel.hidden = true;
+  }
+
+  function renderConditionsPanel(conditionsData) {
+    var panel = el("conditions-panel");
+    var summaryEl = el("conditions-summary");
+    var listEl = el("conditions-list");
+    if (!panel || !summaryEl || !listEl) return;
+
+    var conds = (conditionsData && Array.isArray(conditionsData.conditions)) ? conditionsData.conditions : [];
+    if (conds.length === 0) {
+      panel.hidden = true;
+      return;
+    }
+
+    // Summary row: total + timing breakdown
+    var timingCounts = {};
+    conds.forEach(function (c) {
+      var t = c.timing || "Unknown";
+      timingCounts[t] = (timingCounts[t] || 0) + 1;
+    });
+    var summaryHtml = "<span class=\"conditions-total-badge\">" + conds.length + " Condition" + (conds.length !== 1 ? "s" : "") + "</span>";
+    var timingOrder = ["Prior to Docs", "Prior to Closing", "Post Closing", "Unknown"];
+    timingOrder.forEach(function (t) {
+      if (timingCounts[t]) {
+        summaryHtml += "<span class=\"conditions-timing-summary\">" + escapeHtml(t) + ": " + timingCounts[t] + "</span>";
+      }
+    });
+    summaryEl.innerHTML = summaryHtml;
+
+    // Group by category (preserve pipeline sort order)
+    var categoryOrder = ["Verification", "Assets", "Income", "Credit", "Property", "Title", "Insurance", "Compliance", "Other"];
+    var groups = {};
+    conds.forEach(function (c) {
+      var cat = c.category || "Other";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(c);
+    });
+
+    var listHtml = "";
+    categoryOrder.forEach(function (cat) {
+      var items = groups[cat];
+      if (!items || items.length === 0) return;
+
+      listHtml += "<div class=\"conditions-category-group\">";
+      listHtml += "<h4 class=\"conditions-category-heading\">" + escapeHtml(cat) + " (" + items.length + ")</h4>";
+
+      items.forEach(function (c) {
+        var timing = c.timing || "Unknown";
+        var badgeCls = _TIMING_BADGE_CLASS[timing] || "unknown-timing";
+
+        // Extract filenames from source documents
+        var sourceNames = [];
+        if (c.source && Array.isArray(c.source.documents)) {
+          c.source.documents.forEach(function (doc) {
+            var fp = doc.file_relpath || "";
+            var name = fp.split("/").pop() || fp;
+            if (name && sourceNames.indexOf(name) === -1) sourceNames.push(name);
+          });
+        }
+
+        listHtml += "<div class=\"conditions-item\">";
+        listHtml += "<div class=\"conditions-item-desc\">" + escapeHtml(c.description || "") +
+          (sourceNames.length > 0 ? "<div class=\"conditions-source\">" + escapeHtml(sourceNames.join(", ")) + "</div>" : "") +
+          "</div>";
+        listHtml += "<span class=\"conditions-timing-badge " + badgeCls + "\">" + escapeHtml(timing) + "</span>";
+        listHtml += "</div>";
+      });
+
+      listHtml += "</div>";
+    });
+
+    listEl.innerHTML = listHtml;
+    panel.hidden = false;
+  }
 
   // ——— Ollama models dropdown (populated from server) ———
   async function loadOllamaModels() {
