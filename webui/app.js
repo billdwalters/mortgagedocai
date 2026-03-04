@@ -1502,4 +1502,97 @@
   loadHealth();
   loadOllamaModels();
   setInterval(loadHealth, 30000);
+
+  // ——— Form Fill ———
+  (function initFormFill() {
+    var selectEl = el("formfill-template");
+    var generateBtn = el("formfill-generate-btn");
+    if (!selectEl || !generateBtn) return;
+
+    function loadTemplates() {
+      apiFetch("/formfill/templates").then(function (data) {
+        if (!data || !data.templates) return;
+        // Clear existing options
+        selectEl.innerHTML = '<option value="">Form Fill...</option>';
+        // Group by category
+        var groups = {};
+        data.templates.forEach(function (t) {
+          if (!groups[t.category]) groups[t.category] = [];
+          groups[t.category].push(t);
+        });
+        Object.keys(groups).sort().forEach(function (cat) {
+          var optgroup = document.createElement("optgroup");
+          optgroup.label = cat;
+          groups[cat].forEach(function (t) {
+            var opt = document.createElement("option");
+            opt.value = t.template_id;
+            opt.textContent = t.display_name;
+            opt.title = t.description;
+            optgroup.appendChild(opt);
+          });
+          selectEl.appendChild(optgroup);
+        });
+        selectEl.disabled = false;
+      }).catch(function () {
+        // Templates not available — leave disabled
+      });
+    }
+
+    selectEl.addEventListener("change", function () {
+      generateBtn.disabled = !selectEl.value;
+    });
+
+    generateBtn.addEventListener("click", function () {
+      var templateId = selectEl.value;
+      if (!templateId) return;
+      if (!currentRunId || !currentLoanId) {
+        showInlineMsg("Select a loan with a completed run first", "error");
+        return;
+      }
+      var tenantId = getTenantId();
+      var url = getBaseUrl() + "/tenants/" + tenantId + "/loans/" + currentLoanId
+              + "/runs/" + currentRunId + "/formfill/" + templateId;
+
+      generateBtn.disabled = true;
+      selectEl.disabled = true;
+
+      var headers = {};
+      var key = getApiKey();
+      if (key) headers["X-API-Key"] = key;
+
+      fetch(url, { method: "POST", headers: headers })
+        .then(function (resp) {
+          if (!resp.ok) {
+            return resp.json().then(function (err) {
+              throw new Error(err.detail || "Form generation failed");
+            });
+          }
+          var filled = resp.headers.get("X-FormFill-Cells-Filled") || "?";
+          var total = resp.headers.get("X-FormFill-Cells-Total") || "?";
+          showInlineMsg("Form generated (" + filled + "/" + total + " cells filled)", "ok");
+          return resp.blob();
+        })
+        .then(function (blob) {
+          if (!blob) return;
+          var disposition = templateId + ".xlsx";
+          var a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = disposition;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(a.href);
+        })
+        .catch(function (err) {
+          showInlineMsg("Form fill error: " + err.message, "error");
+        })
+        .finally(function () {
+          selectEl.disabled = false;
+          generateBtn.disabled = !selectEl.value;
+        });
+    });
+
+    loadTemplates();
+  })();
+
 })();

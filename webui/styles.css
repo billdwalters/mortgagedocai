@@ -629,6 +629,17 @@ body {
 .chat-send-row button:hover:not(:disabled) { opacity: 0.9; }
 .chat-send-row button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* ——— Form Fill select ——— */
+.formfill-select {
+  padding: 0.3rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+.formfill-select:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ——— Source path validation feedback ——— */
 .source-validation-msg { font-size: 0.8125rem; margin: 0.25rem 0 0; }
 .source-validation-ok   { color: var(--success); }
