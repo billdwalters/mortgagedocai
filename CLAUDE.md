@@ -15,13 +15,13 @@
 
 ---
 
-## Current Phase: Structured Intelligence v0.5 (in progress)
+## Current Phase: Structured Intelligence v0.5 + Productization
 
 - LLM **extracts structured data only** (conditions, financial inputs)
 - **Python computes all financial math** — LLM must NEVER compute DTI or underwriting decisions
-- Profiles active: `default`, `uw_conditions`
-- Profile planned next: `income_analysis` (structured financial extraction + deterministic DTI)
-- Next phase (v0.6): Deterministic underwriting decision engine (rule-based PASS/FAIL, LLM for explanation only)
+- Profiles active: `default`, `uw_conditions`, `income_analysis`, `uw_decision`
+- **Form Fill** feature live: pre-fills Excel worksheets from pipeline data (3 templates, extensible)
+- Next phase (v0.6): Deterministic underwriting decision engine hardening, more form templates
 
 ---
 
@@ -88,6 +88,8 @@ nas_analyze/tenants/<tenant>/loans/<loan>/<run_id>/
     answer.json
     conditions.json          ← uw_conditions profile
     version.json             ← audit trail (all profiles)
+  outputs/formfill/
+    {template_id}.xlsx       ← pre-filled Excel forms
   outputs/_meta/
     analysis_run.json
     version.json
@@ -144,7 +146,11 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 - `adapters_disk.py` — `DiskJobStore`, `JobKeyIndexImpl`, `LoanLockImpl`
 - `adapters_subprocess.py` — `SubprocessRunner`
 
-**Tests (62 passing as of 2026-02-26):**
+**Form Fill:**
+- `formfill.py` — Form registry (`FORM_TEMPLATES`), `FieldMapping`/`FormTemplate` dataclasses, `fill_form()` filler logic (openpyxl)
+
+**Tests (81 passing as of 2026-03-04):**
+- `test_formfill.py` — Form registry, JSON path resolution, filler logic (19 tests)
 - `test_job_hardening.py` — Job workflow resilience
 - `test_source_path_validation.py` — Source path validation
 - `test_step12_uw_conditions.py` — UW conditions extraction (17 tests)
@@ -156,9 +162,24 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 
 ---
 
-## Recently Completed Work (as of 2026-03-03)
+## Recently Completed Work (as of 2026-03-04)
 
-All TDD (red → green → regression). 62 tests passing.
+All TDD (red → green → regression). 81 tests passing.
+
+### Form Fill Feature (2026-03-04)
+| Component | What was built |
+|-----------|---------------|
+| `scripts/formfill.py` | `FormTemplate`/`FieldMapping` dataclasses, `FORM_TEMPLATES` registry (3 templates), `fill_form()` filler with openpyxl (preserves formulas), `_resolve_json_path()`, `_load_source_data()`, audit dict return |
+| `scripts/test_formfill.py` | 19 tests: registry validation, JSON path resolution, source data loading, fill_form (audit, dir creation, formula preservation, invalid template, missing values, numeric types) |
+| `webui/forms/*.xlsx` | 3 Excel templates: `income_calc_w2.xlsx`, `fha_max_mortgage_calc.xlsx`, `va_irrrl_recoupment_calc.xlsx` |
+| `loan_api.py` | `GET /formfill/templates` (list by category), `POST .../formfill/{template_id}` (generate + download), `.xlsx` media type |
+| `webui/` | Dropdown + Generate button in `main-actions`; `initFormFill` IIFE (static fallback + API refresh, blob download, inline feedback) |
+| Output path | `nas_analyze/.../outputs/formfill/{template_id}.xlsx` |
+
+### Web UI: Stall Detection Fix (2026-03-04)
+| Bug | Fix |
+|-----|-----|
+| Stall detection stopped polling during long Step11 | Now shows informational warning but keeps polling; stepper updates naturally when job finishes |
 
 ### Web UI: Punch List #8, #11, #15 (2026-03-03)
 | Item | What was done |
@@ -195,10 +216,11 @@ All TDD (red → green → regression). 62 tests passing.
 
 ## What's Next (Priority Order)
 
-1. **`income_analysis` profile** — Structured financial extraction: income sources, liabilities, borrower info. LLM extracts only; Python validates.
-2. **Deterministic DTI engine** — Python computes DTI from extracted values; writes `dti.json`; LLM never touches the math.
-3. **Underwriting decision simulation (v0.6)** — Rule-based PASS/FAIL/UNKNOWN; hardcoded thresholds; LLM used only for explanation layer.
-4. **Audit trail hardening** — Reproducible runs, exportable JSON artifacts, version tagging (version.json already in place for all profiles).
+1. **More form templates** — Add remaining 7 worksheets to `FORM_TEMPLATES` registry as extraction profiles improve.
+2. **`income_analysis` profile improvements** — Richer structured financial extraction (borrower names, employer, pay frequency).
+3. **Deterministic DTI engine hardening** — Edge cases, co-borrower logic, program-specific thresholds.
+4. **Underwriting decision simulation (v0.6)** — Rule-based PASS/FAIL/UNKNOWN; hardcoded thresholds; LLM used only for explanation layer.
+5. **Audit trail hardening** — Reproducible runs, exportable JSON artifacts, version tagging (version.json already in place for all profiles).
 
 ---
 
@@ -213,8 +235,9 @@ cd m:\mortgagedocai
 python -m py_compile scripts/step12_analyze.py
 python -m py_compile scripts/step13_build_retrieval_pack.py
 
-# Run full test suite (Windows dev machine, 62 tests)
-python -m pytest scripts/test_step13_chunk_index.py \
+# Run full test suite (81 tests)
+python -m pytest scripts/test_formfill.py \
+                 scripts/test_step13_chunk_index.py \
                  scripts/test_step12_version_blob.py \
                  scripts/test_step12_uw_conditions.py \
                  scripts/test_step12_postprocess_conditions.py \

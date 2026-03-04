@@ -1,6 +1,6 @@
 # MortgageDocAI — Project Status
 
-**Last Updated:** 2026-02-24
+**Last Updated:** 2026-03-04
 
 ## Current phase & AI context
 
@@ -9,16 +9,19 @@
 **Phase:** Structured Intelligence / Productization (infrastructure stabilization complete.)
 
 **Definition of “finish” (current):**
-1. Production-ready structured outputs  
-2. Stable regression harness  
-3. Clean logs (debug gated)  
-4. Reliable checklist extraction  
-5. Ability to expand into deterministic underwriting rule engine  
+1. Production-ready structured outputs
+2. Stable regression harness
+3. Clean logs (debug gated)
+4. Reliable checklist extraction
+5. Ability to expand into deterministic underwriting rule engine
+6. Form fill feature for mortgage worksheets
 
 **Priority order:**
-1. Improve quality of `uw_conditions` extraction (deduplicate, normalize categories, prevent boilerplate inflation).  
-2. Add structured financial extraction (income, liabilities, DTI) — deterministic math + rule-based evaluation.  
-3. Harden audit trail (reproducible runs, exportable JSON artifacts, version tagging).  
+1. Expand form fill templates (7 more worksheets) as extraction profiles improve.
+2. Improve `income_analysis` extraction (borrower names, employer, pay frequency).
+3. Harden deterministic DTI engine (edge cases, co-borrower, program-specific thresholds).
+4. Underwriting decision simulation v0.6 (rule-based PASS/FAIL).
+5. Audit trail hardening (reproducible runs, exportable JSON artifacts).
 
 **Non-negotiables:** No cloud APIs. Do not rename folders/files. Preserve folder contracts (`nas_chunk/`, `nas_analyze/`, `outputs/`). Maintain `run_id` determinism. Preserve citation-integrity filtering. No change that breaks the regression smoke test.  
 
@@ -113,8 +116,9 @@ Pipeline steps:
 - Retrieval packs written under `retrieve/<pipeline_run_id>/retrieval_pack.json`
 - Step12 auto-triggers Step13 if retrieval pack is missing
 - Re-runs for same `run_id` overwrite cleanly
-- **Loan API (FastAPI):** health, list tenants/loans/runs, **source-of-truth source_loans** (list + by loan_id), sync query, pipeline jobs, query jobs, artifacts index and artifact downloads; optional API key and tenant allowlist (see Loan API section below)
-- **Web UI (/ui):** Refresh Loans from source-of-truth mount; loan list with Needs Processing / Up to date badges; Process Loan uses selected loan’s source_path; progress stepper shows live phase colors (streamed job stdout)
+- **Loan API (FastAPI):** health, list tenants/loans/runs, **source-of-truth source_loans** (list + by loan_id), sync query, pipeline jobs, query jobs, artifacts index and artifact downloads, **form fill endpoints** (list templates + generate pre-filled .xlsx); optional API key and tenant allowlist (see Loan API section below)
+- **Web UI (/ui):** Refresh Loans from source-of-truth mount; loan list with Needs Processing / Up to date badges; Process Loan uses selected loan’s source_path; progress stepper shows live phase colors (streamed job stdout); **form fill dropdown** (select template + generate + download)
+- **Form Fill:** 3 Excel templates (Income Calc W2, FHA Max Mortgage, VA IRRRL Recoupment) pre-filled from pipeline data; 81 tests passing
 
 ---
 
@@ -1257,3 +1261,79 @@ Applied at 6 locations:
 4. Progress — Started / Finished
 5. Details — run_id display (raw + formatted in parens)
 6. Summary dashboard — `generated_at_utc`
+
+## Form Fill Feature (2026-03-04)
+
+Pre-fills Excel mortgage worksheets from pipeline-extracted data. Users select a form from a UI dropdown, click Generate, and download a `.xlsx` with whatever cells the pipeline could fill. Formulas preserved so Excel recalculates.
+
+### Architecture
+
+```
+User clicks "Generate"
+  → POST /tenants/{t}/loans/{l}/runs/{r}/formfill/{template_id}
+  → Validate template_id against FORM_TEMPLATES registry
+  → Load pipeline JSONs from outputs/profiles/
+  → Open template .xlsx with openpyxl (preserving formulas)
+  → Write extracted values to mapped cells, skip missing
+  → Save filled .xlsx to outputs/formfill/{template_id}.xlsx
+  → Return FileResponse as download
+```
+
+### New files
+
+| File | Purpose |
+|------|---------|
+| `scripts/formfill.py` | Form registry (`FORM_TEMPLATES`), `FieldMapping`/`FormTemplate` dataclasses, `fill_form()`, `_resolve_json_path()`, `_load_source_data()` |
+| `scripts/test_formfill.py` | 19 unit tests |
+| `webui/forms/income_calc_w2.xlsx` | Income Calc (W2) template |
+| `webui/forms/fha_max_mortgage_calc.xlsx` | FHA Max Mortgage Calc template |
+| `webui/forms/va_irrrl_recoupment_calc.xlsx` | VA IRRRL Recoupment Calc template |
+
+### Templates (initial 3 of 10)
+
+| Template ID | Display Name | Category | Source data |
+|-------------|-------------|----------|-------------|
+| `income_calc_w2` | Income Calc (W2) | Income | `income_analysis.json`, `dti.json` |
+| `fha_max_mortgage_calc` | FHA Max Mortgage Calc | FHA | `income_analysis.json` |
+| `va_irrrl_recoupment_calc` | VA IRRRL Recoupment Calc | VA | `income_analysis.json`, `dti.json` |
+
+### Source file mapping
+
+```
+source="income_analysis"  →  income_analysis/income_analysis.json
+source="dti"              →  income_analysis/dti.json
+source="decision"         →  uw_decision/decision.json
+source="conditions"       →  uw_conditions/conditions.json
+```
+
+### API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/formfill/templates` | List templates grouped by category |
+| POST | `/tenants/{t}/loans/{l}/runs/{r}/formfill/{template_id}` | Generate + download filled `.xlsx` |
+
+Response headers: `X-FormFill-Cells-Filled`, `X-FormFill-Cells-Total`.
+
+### Web UI
+
+- Dropdown (`#formfill-template`) + Generate button in `main-actions` div
+- Static fallback populates dropdown immediately (no API dependency for initial render)
+- `initFormFill` IIFE: loads templates, handles generate click, blob download, inline feedback
+- Button disables during generation (existing pattern)
+
+### Output location
+
+```
+nas_analyze/tenants/{t}/loans/{l}/{run_id}/outputs/formfill/{template_id}.xlsx
+```
+
+### Extending
+
+Add new templates by registering a `FormTemplate` in `formfill.py` with field mappings and placing the `.xlsx` template in `webui/forms/`.
+
+## Web UI: Stall Detection Fix (2026-03-04)
+
+Previously, stall detection (15 minutes without fingerprint change) stopped polling and required manual "Retry" click. During long Step11 runs (15-30m on CPU-only servers), the user would see INTAKE and PROCESS phases, then a stall warning, and after clicking Retry all phases would jump to done.
+
+**Fix:** Stall detection now shows an informational warning but keeps polling. The stepper updates naturally when the job finishes. Warning auto-clears when progress resumes.
