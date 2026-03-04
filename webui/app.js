@@ -1509,33 +1509,39 @@
     var generateBtn = el("formfill-generate-btn");
     if (!selectEl || !generateBtn) return;
 
+    function populateSelect(templates) {
+      selectEl.innerHTML = '<option value="">Form Fill...</option>';
+      var groups = {};
+      templates.forEach(function (t) {
+        if (!groups[t.category]) groups[t.category] = [];
+        groups[t.category].push(t);
+      });
+      Object.keys(groups).sort().forEach(function (cat) {
+        var optgroup = document.createElement("optgroup");
+        optgroup.label = cat;
+        groups[cat].forEach(function (t) {
+          var opt = document.createElement("option");
+          opt.value = t.template_id;
+          opt.textContent = t.display_name;
+          if (t.description) opt.title = t.description;
+          optgroup.appendChild(opt);
+        });
+        selectEl.appendChild(optgroup);
+      });
+    }
+
+    // Static fallback so dropdown works even before API responds
+    populateSelect([
+      {template_id: "income_calc_w2", display_name: "Income Calc (W2)", category: "Income"},
+      {template_id: "fha_max_mortgage_calc", display_name: "FHA Max Mortgage Calc", category: "FHA"},
+      {template_id: "va_irrrl_recoupment_calc", display_name: "VA IRRRL Recoupment Calc", category: "VA"}
+    ]);
+
     function loadTemplates() {
       apiFetch("/formfill/templates").then(function (data) {
-        if (!data || !data.templates) return;
-        // Clear existing options
-        selectEl.innerHTML = '<option value="">Form Fill...</option>';
-        // Group by category
-        var groups = {};
-        data.templates.forEach(function (t) {
-          if (!groups[t.category]) groups[t.category] = [];
-          groups[t.category].push(t);
-        });
-        Object.keys(groups).sort().forEach(function (cat) {
-          var optgroup = document.createElement("optgroup");
-          optgroup.label = cat;
-          groups[cat].forEach(function (t) {
-            var opt = document.createElement("option");
-            opt.value = t.template_id;
-            opt.textContent = t.display_name;
-            opt.title = t.description;
-            optgroup.appendChild(opt);
-          });
-          selectEl.appendChild(optgroup);
-        });
-        selectEl.disabled = false;
-      }).catch(function () {
-        // Templates not available — leave disabled
-      });
+        if (!data || !data.templates || !data.templates.length) return;
+        populateSelect(data.templates);
+      }).catch(function () { /* keep static fallback */ });
     }
 
     selectEl.addEventListener("change", function () {

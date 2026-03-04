@@ -638,7 +638,7 @@ body {
   color: var(--text);
   font-size: 0.875rem;
 }
-.formfill-select:disabled { opacity: 0.5; cursor: not-allowed; }
+.formfill-select:disabled { opacity: 0.5; }
 
 /* ——— Source path validation feedback ——— */
 .source-validation-msg { font-size: 0.8125rem; margin: 0.25rem 0 0; }
