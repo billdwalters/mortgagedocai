@@ -1551,13 +1551,13 @@
     generateBtn.addEventListener("click", function () {
       var templateId = selectEl.value;
       if (!templateId) return;
-      if (!currentRunId || !currentLoanId) {
+      if (!selectedRunId || !selectedLoanId) {
         showInlineMsg("Select a loan with a completed run first", "error");
         return;
       }
       var tenantId = getTenantId();
-      var url = getBaseUrl() + "/tenants/" + tenantId + "/loans/" + currentLoanId
-              + "/runs/" + currentRunId + "/formfill/" + templateId;
+      var url = getBaseUrl() + "/tenants/" + tenantId + "/loans/" + selectedLoanId
+              + "/runs/" + selectedRunId + "/formfill/" + templateId;
 
       generateBtn.disabled = true;
       selectEl.disabled = true;
