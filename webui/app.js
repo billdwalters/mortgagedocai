@@ -705,16 +705,16 @@
           var status = (job && job.status) ? job.status : "";
 
           if (status === "PENDING" || status === "RUNNING" || status === "QUEUED") {
-            if (Date.now() - lastChangeAtMs > STALL_MS) {
-              showPollWarning("Job appears stalled (no progress updates for 2m).");
-              stopPolling();
-              _jobActive = false;
-              updateProcessLoanButton();
+            var stalledMs = Date.now() - lastChangeAtMs;
+            if (stalledMs > STALL_MS) {
+              var mins = Math.round(stalledMs / 60000);
+              showPollWarning("Job has not changed in " + mins + "m \u2014 still polling. Step11 (embed) can take 15\u201330 min on CPU-only servers.");
+              // Keep polling — don't stop. The job may still be running a long step.
             }
           }
 
           setJobFields(job);
-          if (!stopped) { hidePollWarning(); }
+          if (!stopped && (Date.now() - lastChangeAtMs <= STALL_MS)) { hidePollWarning(); }
 
           if (status === "SUCCESS" || status === "FAIL") {
             stopPolling();
