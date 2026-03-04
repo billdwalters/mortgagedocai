@@ -250,6 +250,8 @@ def _media_type_for_filename(filename: str) -> str:
         return "application/x-ndjson"
     if filename.endswith(".md"):
         return "text/markdown; charset=utf-8"
+    if filename.endswith(".xlsx"):
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     return "application/octet-stream"
 
 
@@ -786,6 +788,65 @@ def get_profile_artifact(
         path=str(candidate),
         media_type=_media_type_for_filename(filename),
         headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Form Fill endpoints
+# ---------------------------------------------------------------------------
+from formfill import FORM_TEMPLATES, fill_form
+
+
+@app.get("/formfill/templates")
+def list_formfill_templates() -> dict[str, Any]:
+    """Return available form templates grouped by category."""
+    templates = [
+        {
+            "template_id": t.template_id,
+            "display_name": t.display_name,
+            "category": t.category,
+            "description": t.description,
+        }
+        for t in FORM_TEMPLATES.values()
+    ]
+    return {"templates": templates}
+
+
+@app.post("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/formfill/{template_id}")
+def generate_formfill(
+    tenant_id: str, loan_id: str, run_id: str, template_id: str
+) -> FileResponse:
+    """Generate a pre-filled .xlsx from pipeline data and return as download."""
+    for name in (tenant_id, loan_id, run_id, template_id):
+        if not _safe_single_component(name):
+            raise HTTPException(status_code=400, detail="Invalid path component")
+    if template_id not in FORM_TEMPLATES:
+        raise HTTPException(status_code=404, detail=f"Unknown template: {template_id}")
+
+    run_base = NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id / run_id
+    if not run_base.is_dir():
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    profiles_dir = run_base / "outputs" / "profiles"
+    output_path = run_base / "outputs" / "formfill" / f"{template_id}.xlsx"
+
+    try:
+        audit = fill_form(
+            template_id, profiles_dir, output_path,
+            loan_id=loan_id, run_id=run_id,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    tmpl = FORM_TEMPLATES[template_id]
+    return FileResponse(
+        path=str(output_path),
+        media_type=_media_type_for_filename(tmpl.filename),
+        headers={
+            "Content-Disposition": f'attachment; filename="{tmpl.filename}"',
+            "X-FormFill-Cells-Filled": str(audit["cells_filled"]),
+            "X-FormFill-Cells-Total": str(audit["cells_total"]),
+        },
     )
 
 
