@@ -9,8 +9,9 @@ Items to address. Grouped by category, roughly prioritized within each group.
 ### 2. Loan summary dashboard after processing
 Show a quick-glance view when a loan is selected: PASS/FAIL/UNKNOWN decision badge, DTI ratio, monthly income total, condition count. Currently you have to open raw JSON artifacts to see any of this.
 
-### 3. Conditions checklist view
-`conditions.json` has structured data (category, timing, description, citations) but is only visible as raw JSON in the artifacts tab. Display as a formatted, categorized table or checklist.
+### ~~3. Conditions checklist view~~ DONE (2026-03-05)
+~~`conditions.json` has structured data (category, timing, description, citations) but is only visible as raw JSON in the artifacts tab. Display as a formatted, categorized table or checklist.~~
+UI was already fully implemented (`renderConditionsPanel()` in app.js, HTML, CSS). Two fixes applied: (1) added `conditions.json` to `PROFILE_FILE_NAMES` in `loan_api.py` so the API serves it; (2) wired `uw_conditions` profile into `run_loan_job.py` pipeline (was never called). Added `STEP12_UW_CONDITIONS` phase marker and stepper label.
 
 ### 4. Income & DTI panel
 `dti.json` and `income_analysis.json` are generated but never displayed in the UI. Show income sources, liabilities, PITIA, front-end and back-end DTI ratios in a readable card/table layout.

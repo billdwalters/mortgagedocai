@@ -68,11 +68,12 @@ Some phases are conditional on pipeline flags and output:
   1. PHASE:INTAKE              — only if --skip-intake is NOT set
   2. PHASE:PROCESS             — only if --skip-process is NOT set
   3. PHASE:STEP13_GENERAL      — always when retrieval pack is built
-  4. PHASE:STEP13_INCOME       — only if income retrieval pack is built
-  5. PHASE:STEP12_INCOME_ANALYSIS — only if income_analysis profile runs
-  6. PHASE:STEP12_UW_DECISION  — only if uw_decision profile runs
-  7. PHASE:DONE                — on successful completion
-  8. PHASE:FAIL                — on failure (see Failure semantics below)
+  4. PHASE:STEP12_UW_CONDITIONS — always (uw_conditions profile)
+  5. PHASE:STEP13_INCOME       — only if income retrieval pack is built
+  6. PHASE:STEP12_INCOME_ANALYSIS — only if income_analysis profile runs
+  7. PHASE:STEP12_UW_DECISION  — only if uw_decision profile runs
+  8. PHASE:DONE                — on successful completion
+  9. PHASE:FAIL                — on failure (see Failure semantics below)
 
 Stability (MUST): The phase names listed above are contract-stable.
 They MUST NOT be renamed without a contract version bump and a coordinated

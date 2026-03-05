@@ -150,7 +150,7 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 **Form Fill:**
 - `formfill.py` — Form registry (`FORM_TEMPLATES`), `FieldMapping`/`FormTemplate` dataclasses, `fill_form()` filler logic (openpyxl)
 
-**Tests (81 passing as of 2026-03-04):**
+**Tests (81 passing as of 2026-03-05):**
 - `test_formfill.py` — Form registry, JSON path resolution, filler logic (19 tests)
 - `test_job_hardening.py` — Job workflow resilience
 - `test_source_path_validation.py` — Source path validation
@@ -163,9 +163,18 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 
 ---
 
-## Recently Completed Work (as of 2026-03-04)
+## Recently Completed Work (as of 2026-03-05)
 
 All TDD (red → green → regression). 81 tests passing.
+
+### Punch List #3: Conditions Checklist View (2026-03-05)
+| Component | What was done |
+|-----------|--------------|
+| `loan_api.py` | Added `conditions.json` to `PROFILE_FILE_NAMES` — API was returning 404 |
+| `run_loan_job.py` | Wired `uw_conditions` profile into pipeline — was never called in production runs |
+| `run_loan_job.py` | Added `UW_CONDITIONS_QUERY`, `STEP12_UW_CONDITIONS` phase, `conditions_json` to `_output_paths` |
+| `webui/app.js` | Added `STEP12_UW_CONDITIONS` to stepper labels and order |
+| Pipeline order | Step13 general → **Step12 uw_conditions** → Step13 income → Step12 income_analysis → Step12 uw_decision |
 
 ### Form Fill Feature (2026-03-04)
 | Component | What was built |

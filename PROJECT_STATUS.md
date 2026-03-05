@@ -1,6 +1,6 @@
 # MortgageDocAI — Project Status
 
-**Last Updated:** 2026-03-04
+**Last Updated:** 2026-03-05
 
 ## Current phase & AI context
 
@@ -1337,3 +1337,19 @@ Add new templates by registering a `FormTemplate` in `formfill.py` with field ma
 Previously, stall detection (15 minutes without fingerprint change) stopped polling and required manual "Retry" click. During long Step11 runs (15-30m on CPU-only servers), the user would see INTAKE and PROCESS phases, then a stall warning, and after clicking Retry all phases would jump to done.
 
 **Fix:** Stall detection now shows an informational warning but keeps polling. The stepper updates naturally when the job finishes. Warning auto-clears when progress resumes.
+
+## Punch List #3: Conditions Checklist View (2026-03-05)
+
+The conditions panel UI (HTML, CSS, JS `renderConditionsPanel()`) was already fully implemented but never worked because of two missing pieces:
+
+| Component | Fix |
+|-----------|-----|
+| `loan_api.py` | Added `conditions.json` to `PROFILE_FILE_NAMES` tuple — API was returning 404 for conditions data |
+| `run_loan_job.py` | Wired `uw_conditions` profile into pipeline — Step12 was never called with `--analysis-profile uw_conditions`, so `conditions.json` was never generated during production runs |
+| `run_loan_job.py` | Added `UW_CONDITIONS_QUERY` constant, `STEP12_UW_CONDITIONS` phase marker, `conditions_json` to `_output_paths` |
+| `webui/app.js` | Added `STEP12_UW_CONDITIONS: "UW Conditions"` to `PHASE_LABELS` and `STEPPER_ORDER` |
+| `CLAUDE.md` | Updated PHASE markers documentation |
+
+The `uw_conditions` step runs after general Step13 retrieval (reuses the same retrieval pack via `--no-auto-retrieve`), using mistral at temp=0 with 1500 max tokens and 6000 evidence chars. Pipeline order is now: Step13 general → **Step12 uw_conditions** → Step13 income → Step12 income_analysis → Step12 uw_decision.
+
+81 tests passing (1 pre-existing flaky test `test_per_loan_lock_second_waits`). Regression smoke test passes.
