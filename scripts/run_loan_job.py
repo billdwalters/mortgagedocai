@@ -34,6 +34,10 @@ QUERY_RETRIEVE = (
     "PTC suspense approval conditions"
 )
 
+UW_CONDITIONS_QUERY = (
+    "List all underwriting conditions from the approval or commitment letter."
+)
+
 INCOME_RETRIEVE_QUERY = (
     "Estimated Total Monthly Payment PITIA Proposed housing payment "
     "Principal & Interest Escrow Amount can increase over time "
@@ -99,6 +103,7 @@ def _output_paths(
     rp = base / "retrieve" / run_id / "retrieval_pack.json"
     profiles = base / run_id / "outputs" / "profiles"
     return {
+        "conditions_json": str(profiles / "uw_conditions" / "conditions.json"),
         "decision_json": (
             str(profiles / "uw_decision" / "decision.json")
             if ran_uw_decision else None
@@ -272,6 +277,29 @@ def main(argv=None) -> int:
                 print(f"[debug] expect_rp_hash_stable: hashes match {hash1!r}", flush=True)
 
         step12_env = None if args.run_llm else {"RUN_LLM": "0"}
+
+        # --- UW Conditions (uses general retrieval pack) ---
+        _phase("STEP12_UW_CONDITIONS")
+        step12_uw_cond_cmd = [
+            sys.executable, _step("step12_analyze.py"),
+            "--tenant-id", tenant_id,
+            "--loan-id", loan_id,
+            "--run-id", run_id,
+            "--query", UW_CONDITIONS_QUERY,
+            "--analysis-profile", "uw_conditions",
+            "--ollama-url", ollama_url,
+            "--llm-model", "mistral",
+            "--llm-temperature", "0",
+            "--llm-max-tokens", "1500",
+            "--evidence-max-chars", "6000",
+            "--ollama-timeout", "900",
+            "--save-llm-raw",
+            "--no-auto-retrieve",
+        ]
+        if args.debug:
+            step12_uw_cond_cmd.append("--debug")
+        _run(step12_uw_cond_cmd, "Step12: uw_conditions", env=step12_env)
+
         # --- Income analysis ---
         if ran_income:
             _phase("STEP13_INCOME")

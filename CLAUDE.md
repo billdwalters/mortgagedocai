@@ -123,6 +123,7 @@ chunk_id     = SHA256(normalized_chunk_text)   — set-based, no ML
 PHASE:INTAKE               ← if --skip-intake not set
 PHASE:PROCESS              ← if --skip-process not set
 PHASE:STEP13_GENERAL       ← always when retrieval pack built
+PHASE:STEP12_UW_CONDITIONS ← always (uw_conditions profile)
 PHASE:STEP13_INCOME        ← if income retrieval pack built
 PHASE:STEP12_INCOME_ANALYSIS ← if income_analysis profile runs
 PHASE:STEP12_UW_DECISION   ← if uw_decision profile runs

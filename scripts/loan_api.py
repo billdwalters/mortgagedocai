@@ -229,6 +229,7 @@ PROFILE_FILE_NAMES = (
     "answer.json",
     "answer.md",
     "citations.jsonl",
+    "conditions.json",
     "income_analysis.json",
     "dti.json",
     "decision.json",

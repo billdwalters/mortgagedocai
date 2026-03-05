@@ -38,6 +38,7 @@
     INTAKE: "Intake",
     PROCESS: "Process",
     STEP13_GENERAL: "Retrieval",
+    STEP12_UW_CONDITIONS: "UW Conditions",
     STEP13_INCOME: "Income Retrieval",
     STEP12_INCOME_ANALYSIS: "Income Analysis",
     STEP12_UW_DECISION: "UW Decision",
@@ -46,8 +47,9 @@
   };
 
   const STEPPER_ORDER = [
-    "INTAKE", "PROCESS", "STEP13_GENERAL", "STEP13_INCOME",
-    "STEP12_INCOME_ANALYSIS", "STEP12_UW_DECISION", "DONE", "FAIL",
+    "INTAKE", "PROCESS", "STEP13_GENERAL", "STEP12_UW_CONDITIONS",
+    "STEP13_INCOME", "STEP12_INCOME_ANALYSIS", "STEP12_UW_DECISION",
+    "DONE", "FAIL",
   ];
 
   function el(id) {
