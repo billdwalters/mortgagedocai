@@ -1581,13 +1581,14 @@
         .then(function (blob) {
           if (!blob) return;
           var disposition = templateId + ".xlsx";
+          var blobUrl = URL.createObjectURL(blob);
           var a = document.createElement("a");
-          a.href = URL.createObjectURL(blob);
+          a.href = blobUrl;
           a.download = disposition;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
-          URL.revokeObjectURL(a.href);
+          setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 10000);
         })
         .catch(function (err) {
           showInlineMsg("Form fill error: " + err.message, "error");
