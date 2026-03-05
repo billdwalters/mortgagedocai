@@ -75,31 +75,71 @@ _FORMS_DIR = Path(__file__).resolve().parent.parent / "webui" / "forms"
 # Template registry
 # ---------------------------------------------------------------------------
 
+# ---- Income Calc (W2) ----
+# Template layout (data-entry cells only, no formulas):
+#   Row 4:  C4=Borrower Name
+#   Row 11: C11=YTD Earnings, G11=# months  → J11=C11/G11 (formula)
+#   Row 12: C12=W2 Year 1,    G12=# months  → J12=C12/G12 (formula)
+#   Row 13: C13=W2 Year 2,    G13=# months  → J13=C13/G13 (formula)
+#   Row 25: C25=Monthly salary               → J25=C25*1 (formula)
+#   Row 39: C39=YTD OT/Bonus, G39=# months  → J39=C39/G39 (formula)
+#   Row 40: C40=Past year OT,  G40=# months → J40=C40/G40 (formula)
+# NOTE: C15-C20, C34 are formulas — do NOT overwrite.
 _INCOME_CALC_W2_MAPPINGS = (
-    # YTD Earnings
-    FieldMapping("C11", "income_analysis", "monthly_income_total.value", CellType.CURRENCY,
-                 label="YTD Earnings (monthly income total)"),
-    # Front-end DTI
-    FieldMapping("C15", "dti", "front_end_dti", CellType.PERCENTAGE,
-                 label="Front-end DTI"),
-    # Back-end DTI
-    FieldMapping("C16", "dti", "back_end_dti", CellType.PERCENTAGE,
-                 label="Back-end DTI"),
+    # Primary income component → YTD earnings row
+    FieldMapping("C11", "income_analysis", "monthly_income_total.components.0.period_total", CellType.CURRENCY,
+                 label="YTD earnings (1st income component period total)"),
+    FieldMapping("G11", "income_analysis", "monthly_income_total.components.0.period_months", CellType.NUMBER,
+                 label="YTD months (1st income component)"),
+    # Second income component → W2 Year 1 row (if co-borrower / 2nd P&L)
+    FieldMapping("C12", "income_analysis", "monthly_income_total.components.1.period_total", CellType.CURRENCY,
+                 label="W2 Year 1 (2nd income component period total)"),
+    FieldMapping("G12", "income_analysis", "monthly_income_total.components.1.period_months", CellType.NUMBER,
+                 label="W2 Year 1 months (2nd income component)"),
+    # Monthly salary field (monthly income total for quick reference)
+    FieldMapping("C25", "dti", "monthly_income_total", CellType.CURRENCY,
+                 label="Monthly salary (pipeline monthly income total)"),
+    # PITIA / housing payment used
+    FieldMapping("C30", "dti", "housing_payment_used", CellType.CURRENCY,
+                 label="Housing payment (PITIA)"),
+    # Monthly liabilities
+    FieldMapping("C39", "dti", "monthly_debt_total", CellType.CURRENCY,
+                 label="Monthly debt total (as OT/Bonus placeholder)"),
 )
 
+# ---- FHA Max Mortgage Calc ----
+# Simple sheet: I10=UPB, I11=interest due, I5=county limit, I7=adjusted value
+# Streamline sheet: I6=outstanding balance, I12=original FHA amount
+# Pipeline extracts monthly liabilities and PITIA — map what we can.
 _FHA_MAX_MORTGAGE_MAPPINGS = (
-    # Unpaid principal balance of existing FHA mortgage
-    FieldMapping("I10", "income_analysis", "liability_items.0.balance", CellType.CURRENCY,
-                 sheet="Simple", label="Existing mortgage UPB"),
+    # Simple sheet — existing mortgage balance approximation
+    FieldMapping("I10", "dti", "housing_payment_used", CellType.CURRENCY,
+                 sheet="Simple", label="Monthly PITIA (as reference for existing mortgage)"),
+    # Streamline sheet — PITIA
+    FieldMapping("I6", "dti", "housing_payment_used", CellType.CURRENCY,
+                 sheet=" Streamline (Owner-Occupied)", label="Monthly PITIA"),
 )
 
+# ---- VA IRRRL Recoupment Calc ----
+# Sheet1: B11=existing loan amt, C11=proposed loan amt, B14=existing rate,
+#   C14=proposed rate, B15=existing P&I, C15=proposed P&I (formula =C15)
+#   C16=VA funding fee, C17=closing costs, B12/C12=loan term
 _VA_IRRRL_MAPPINGS = (
-    # Existing monthly P&I
+    # Existing monthly P&I from PITIA extraction
     FieldMapping("B15", "income_analysis", "proposed_pitia.value", CellType.CURRENCY,
                  label="Existing monthly P&I (from PITIA)"),
-    # Monthly income for context
+    # Monthly income (context)
     FieldMapping("B11", "dti", "monthly_income_total", CellType.CURRENCY,
-                 label="Monthly income total"),
+                 label="Existing loan amount (placeholder: monthly income)"),
+    # Monthly debt total
+    FieldMapping("C18", "dti", "monthly_debt_total", CellType.CURRENCY,
+                 label="Monthly debt total (closing costs placeholder)"),
+    # Front-end DTI
+    FieldMapping("B14", "dti", "front_end_dti", CellType.PERCENTAGE,
+                 label="Front-end DTI (existing rate placeholder)"),
+    # Back-end DTI
+    FieldMapping("C14", "dti", "back_end_dti", CellType.PERCENTAGE,
+                 label="Back-end DTI (proposed rate placeholder)"),
 )
 
 FORM_TEMPLATES: dict[str, FormTemplate] = {}

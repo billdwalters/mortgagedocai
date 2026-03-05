@@ -36,7 +36,7 @@ def test_registry_income_calc_w2_exists():
     assert t.display_name == "Income Calc (W2)"
     assert t.category == "Income"
     assert t.filename == "income_calc_w2.xlsx"
-    assert len(t.mappings) > 0
+    assert len(t.mappings) >= 5
 
 
 def test_registry_fha_max_mortgage_exists():
@@ -136,7 +136,13 @@ def _make_profiles_dir(tmp_path):
     (profiles / "uw_decision").mkdir(parents=True)
     (profiles / "uw_conditions").mkdir(parents=True)
     (profiles / "income_analysis" / "income_analysis.json").write_text(json.dumps({
-        "monthly_income_total": {"value": 6500.0},
+        "monthly_income_total": {
+            "value": 6500.0,
+            "components": [
+                {"period_total": 58500.0, "period_months": 9.0, "monthly_equivalent": 6500.0},
+                {"period_total": 30000.0, "period_months": 12.0, "monthly_equivalent": 2500.0},
+            ],
+        },
         "monthly_liabilities_total": {"value": 1250.0},
         "proposed_pitia": {"value": 2100.0},
         "income_items": [
