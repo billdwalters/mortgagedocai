@@ -886,6 +886,14 @@
     return m + "m " + rem.toFixed(0) + "s";
   }
 
+  function formatBytes(bytes) {
+    if (bytes == null || isNaN(bytes)) return "—";
+    var b = Number(bytes);
+    if (b < 1024) return b + " B";
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB";
+    return (b / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
   /** Parse run_id-style (2026-02-26T060725Z) or ISO timestamps and return locale string. */
   function formatTimestamp(raw) {
     if (raw == null || raw === "" || raw === "—" || raw === "Never" || raw === "Unknown") return raw || "—";
@@ -910,6 +918,12 @@
   function fetchRunManifest(tenant, loan, run) {
     var path = "/tenants/" + encodeURIComponent(tenant) + "/loans/" + encodeURIComponent(loan) +
       "/runs/" + encodeURIComponent(run);
+    return apiJson(path).catch(function () { return null; });
+  }
+
+  function fetchDocumentInventory(tenant, loan, run) {
+    var path = "/tenants/" + encodeURIComponent(tenant) + "/loans/" + encodeURIComponent(loan) +
+      "/runs/" + encodeURIComponent(run) + "/document_inventory";
     return apiJson(path).catch(function () { return null; });
   }
 
@@ -1102,6 +1116,57 @@
     return html;
   }
 
+  function renderInventoryCard(inv) {
+    if (!inv) return "<p class=\"muted\">Not available</p>";
+    var s = inv.summary || {};
+    var docs = inv.documents || [];
+
+    // Summary stats row
+    var html = "<div style=\"display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:0.5rem;font-size:0.8125rem\">";
+    html += "<span><strong>" + (s.documents_ingested || 0) + "</strong> ingested</span>";
+    if (s.documents_processed != null) html += "<span><strong>" + s.documents_processed + "</strong> processed</span>";
+    if (s.total_chunks != null) html += "<span><strong>" + s.total_chunks + "</strong> chunks</span>";
+    if (s.total_size_bytes) html += "<span>" + formatBytes(s.total_size_bytes) + " total</span>";
+    if (s.skipped_encrypted_count) html += "<span style=\"color:var(--warn)\">" + s.skipped_encrypted_count + " encrypted/skipped</span>";
+    html += "</div>";
+
+    // File type pills
+    var ftc = s.file_type_counts || {};
+    var types = Object.keys(ftc);
+    if (types.length > 0) {
+      html += "<div style=\"display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.5rem\">";
+      types.forEach(function (t) {
+        html += "<span class=\"conditions-timing-summary\">" + escapeHtml(t) + ": " + ftc[t] + "</span>";
+      });
+      html += "</div>";
+    }
+
+    if (docs.length === 0) return html;
+
+    // Document table
+    var tableHtml = "<table class=\"summary-rules-table\"><thead><tr>" +
+      "<th>Filename</th><th>Type</th><th>Size</th><th>Pages</th><th>Chunks</th>" +
+      "</tr></thead><tbody>";
+    docs.forEach(function (d) {
+      tableHtml += "<tr>" +
+        "<td title=\"" + escapeHtml(d.document_id || "") + "\">" + escapeHtml(d.filename || "—") + "</td>" +
+        "<td>" + escapeHtml(d.file_type || "—") + "</td>" +
+        "<td>" + formatBytes(d.size_bytes) + "</td>" +
+        "<td>" + (d.page_count != null ? d.page_count : "—") + "</td>" +
+        "<td>" + (d.chunk_count != null ? d.chunk_count : "—") + "</td>" +
+        "</tr>";
+    });
+    tableHtml += "</tbody></table>";
+
+    // Wrap in collapsible details if >10 docs
+    if (docs.length > 10) {
+      html += "<details><summary>" + docs.length + " documents</summary>" + tableHtml + "</details>";
+    } else {
+      html += tableHtml;
+    }
+    return html;
+  }
+
   function loadSummaryDashboard(loanId, runId) {
     var dashEl = el("summary-dashboard");
     if (!dashEl) return;
@@ -1113,13 +1178,14 @@
     var seq = ++_dashboardRenderSeq;
     var tenant = getTenantId();
 
-    // Fire all 5 fetches in parallel
+    // Fire all 6 fetches in parallel
     Promise.allSettled([
       fetchArtifactJson(tenant, loanId, runId, "uw_decision", "decision.json"),
       fetchArtifactJson(tenant, loanId, runId, "income_analysis", "dti.json"),
       fetchArtifactJson(tenant, loanId, runId, "income_analysis", "income_analysis.json"),
       fetchRunManifest(tenant, loanId, runId),
       fetchArtifactJson(tenant, loanId, runId, "uw_conditions", "conditions.json"),
+      fetchDocumentInventory(tenant, loanId, runId),
     ]).then(function (results) {
       // Guard: user may have switched loans
       if (seq !== _dashboardRenderSeq) return;
@@ -1130,9 +1196,10 @@
       var income     = results[2].status === "fulfilled" ? results[2].value : null;
       var manifest   = results[3].status === "fulfilled" ? results[3].value : null;
       var conditions = results[4].status === "fulfilled" ? results[4].value : null;
+      var inventory  = results[5].status === "fulfilled" ? results[5].value : null;
 
       // If every fetch returned null, hide entire dashboard
-      if (!decision && !dti && !income && !manifest) {
+      if (!decision && !dti && !income && !manifest && !inventory) {
         dashEl.hidden = true;
         hideConditionsPanel();
         return;
@@ -1141,11 +1208,13 @@
       var decBody = el("summary-decision-body");
       var dtiBody = el("summary-dti-body");
       var incBody = el("summary-income-body");
+      var invBody = el("summary-inventory-body");
       var runBody = el("summary-run-body");
 
       if (decBody) decBody.innerHTML = renderDecisionCard(decision, conditions);
       if (dtiBody) dtiBody.innerHTML = renderDtiCard(dti);
       if (incBody) incBody.innerHTML = renderIncomeCard(income);
+      if (invBody) invBody.innerHTML = renderInventoryCard(inventory);
       if (runBody) runBody.innerHTML = renderRunCard(manifest);
 
       dashEl.hidden = false;

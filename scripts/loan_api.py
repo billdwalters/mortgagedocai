@@ -46,6 +46,8 @@ if str(_scripts_dir) not in sys.path:
 REPO_ROOT = _scripts_dir.parent
 SCRIPTS_DIR = _scripts_dir
 NAS_ANALYZE = Path("/mnt/nas_apps/nas_analyze")
+NAS_INGEST = Path("/mnt/nas_apps/nas_ingest")
+NAS_CHUNK = Path("/mnt/nas_apps/nas_chunk")
 # Source-of-truth root for original loan folders (env with fallback)
 SOURCE_LOANS_ROOT = Path(os.environ.get("MORTGAGEDOCAI_SOURCE_LOANS_ROOT", "/mnt/source_loans").strip())
 # Category folders under SOURCE_LOANS_ROOT to scan (avoids listing root, which can hit #recycle permission denied)
@@ -342,6 +344,110 @@ def _build_artifacts_index(tenant_id: str, loan_id: str, run_id: str) -> dict[st
         "job_manifest": job_manifest,
         "profiles": profiles_list,
     }
+
+
+_FILE_TYPE_MAP = {
+    ".pdf": "PDF", ".xlsx": "XLSX", ".xls": "XLS", ".docx": "DOCX",
+    ".doc": "DOC", ".jpg": "JPG", ".jpeg": "JPEG", ".png": "PNG",
+    ".tif": "TIF", ".tiff": "TIFF", ".csv": "CSV", ".txt": "TXT",
+}
+
+
+def _detect_file_type(filename: str) -> str:
+    ext = Path(filename).suffix.lower()
+    return _FILE_TYPE_MAP.get(ext, ext if ext else "UNKNOWN")
+
+
+def _build_document_inventory(tenant_id: str, loan_id: str, run_id: str) -> dict[str, Any]:
+    """Merge intake_manifest.json + processing_run.json + chunk_map.json → document inventory."""
+
+    # --- Load intake manifest (nas_ingest) ---
+    intake_path = NAS_INGEST / "tenants" / tenant_id / "loans" / loan_id / "_meta" / "intake_manifest.json"
+    intake_files: list[dict] = []
+    intake_timestamp: str | None = None
+    try:
+        with intake_path.open() as f:
+            intake = json.load(f)
+        if isinstance(intake, dict):
+            intake_files = intake.get("files", [])
+            intake_timestamp = intake.get("timestamp_utc")
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    # --- Load processing_run.json (nas_chunk) ---
+    proc_path = NAS_CHUNK / "tenants" / tenant_id / "loans" / loan_id / run_id / "_meta" / "processing_run.json"
+    proc_docs: int | None = None
+    proc_chunks: int | None = None
+    proc_skipped: int | None = None
+    try:
+        with proc_path.open() as f:
+            proc = json.load(f)
+        if isinstance(proc, dict):
+            proc_docs = proc.get("documents_processed")
+            proc_chunks = proc.get("total_chunks")
+            proc_skipped = proc.get("skipped_encrypted_count")
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    # --- Load chunk_maps (nas_chunk) — per-document page/chunk stats ---
+    chunks_base = NAS_CHUNK / "tenants" / tenant_id / "loans" / loan_id / run_id / "chunks"
+    chunk_stats: dict[str, dict[str, int | None]] = {}  # document_id → {page_count, chunk_count}
+    try:
+        for cm_path in chunks_base.glob("*/chunk_map.json"):
+            doc_id = cm_path.parent.name
+            try:
+                with cm_path.open() as f:
+                    cm = json.load(f)
+                if not isinstance(cm, dict):
+                    continue
+                max_page = 0
+                for entry in cm.values():
+                    pe = entry.get("page_end")
+                    if pe is not None and pe > max_page:
+                        max_page = pe
+                chunk_stats[doc_id] = {
+                    "page_count": max_page if max_page > 0 else None,
+                    "chunk_count": len(cm),
+                }
+            except (OSError, json.JSONDecodeError):
+                pass
+    except OSError:
+        pass
+
+    # --- Merge into document list ---
+    documents: list[dict[str, Any]] = []
+    total_size = 0
+    file_type_counts: dict[str, int] = {}
+    for f_entry in intake_files:
+        doc_id = f_entry.get("document_id", "")
+        stored = f_entry.get("stored_relative_path", "")
+        filename = Path(stored).name if stored else ""
+        file_type = _detect_file_type(filename)
+        size = f_entry.get("size_bytes", 0) or 0
+        total_size += size
+        file_type_counts[file_type] = file_type_counts.get(file_type, 0) + 1
+
+        cs = chunk_stats.get(doc_id)
+        documents.append({
+            "document_id": doc_id,
+            "filename": filename,
+            "file_type": file_type,
+            "size_bytes": size,
+            "page_count": cs["page_count"] if cs else None,
+            "chunk_count": cs["chunk_count"] if cs else None,
+        })
+
+    summary: dict[str, Any] = {
+        "documents_ingested": len(intake_files),
+        "documents_processed": proc_docs,
+        "total_chunks": proc_chunks,
+        "skipped_encrypted_count": proc_skipped,
+        "total_size_bytes": total_size,
+        "file_type_counts": file_type_counts,
+        "intake_timestamp_utc": intake_timestamp,
+    }
+
+    return {"summary": summary, "documents": documents}
 
 
 # ---------------------------------------------------------------------------
@@ -764,6 +870,12 @@ def get_run_artifacts(tenant_id: str, loan_id: str, run_id: str) -> dict[str, An
         return _build_artifacts_index(tenant_id, loan_id, run_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Run not found")
+
+
+@app.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/document_inventory")
+def get_document_inventory(tenant_id: str, loan_id: str, run_id: str) -> dict[str, Any]:
+    """Document inventory: merged intake manifest + processing stats + per-doc chunk/page counts."""
+    return _build_document_inventory(tenant_id, loan_id, run_id)
 
 
 @app.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/artifacts/{profile}/{filename}")
