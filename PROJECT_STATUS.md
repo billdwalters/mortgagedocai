@@ -1356,6 +1356,34 @@ The `uw_conditions` step runs after general Step13 retrieval (reuses the same re
 
 ---
 
+## Punch List #9: Database Housekeeping UI (2026-03-06)
+
+When a loan folder is moved to "closed loans", it disappears from the UI but processed data persists in Qdrant + 3 NAS mounts. The CLI tool (`scripts/cleanup_orphans.py`) already handles detection and cleanup. This adds a UI so the user can scan and purge without SSH.
+
+### API Endpoints (`scripts/loan_api.py`)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/tenants/{t}/housekeeping/orphans` | GET | Scans for orphaned loans; returns loan IDs, NAS locations, dir sizes, Qdrant vector counts |
+| `/tenants/{t}/housekeeping/orphans/purge` | POST | Deletes selected orphans; body `{"loan_ids": [...], "skip_qdrant": false}` |
+
+Safety guards on purge:
+- Re-verifies each loan is still orphaned before deleting (re-runs detection)
+- Skips loans with active jobs
+- Caps at 20 loans per request
+- Deletes Qdrant vectors first, then NAS dirs
+
+### UI (`webui/index.html` + `webui/app.js`)
+
+- "Housekeeping" button in sidebar (below Refresh Loans)
+- `housekeeping-panel` section: summary counts, checkbox table (loan ID, NAS sizes per mount, Qdrant vectors, status), Select All toggle, Purge Selected with `confirm()` dialog
+- `initHousekeeping()` IIFE: scan → render → purge → inline results → auto-rescan
+- Button disable during async ops; inline error/success messages
+
+81 tests + 10 cleanup_orphans tests passing. No backend logic changes — reuses existing `cleanup_orphans.py` functions.
+
+---
+
 ## Punch List #2, #4, #5, #6: View Artifacts Bug Fix + Dashboard Audit (2026-03-06)
 
 Items #2 (Loan summary dashboard), #4 (Income & DTI panel), #5 (Decision explanation display), and #6 (Markdown rendering) were all already implemented in the UI:

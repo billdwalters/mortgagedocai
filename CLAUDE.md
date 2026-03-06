@@ -165,7 +165,16 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 
 ## Recently Completed Work (as of 2026-03-06)
 
-All TDD (red → green → regression). 81 tests passing.
+All TDD (red → green → regression). 81 tests passing (+ 10 cleanup_orphans tests).
+
+### Punch List #9: Database Housekeeping UI (2026-03-06)
+| Component | What was done |
+|-----------|--------------|
+| `loan_api.py` | Added `GET /tenants/{t}/housekeeping/orphans` — scans for orphaned loans (source removed, NAS/Qdrant data remains), returns sizes + Qdrant vector counts |
+| `loan_api.py` | Added `POST /tenants/{t}/housekeeping/orphans/purge` — deletes selected orphans; re-verifies orphan status, skips active jobs, caps 20/request |
+| `loan_api.py` | Imports from `cleanup_orphans.py`: `find_orphaned_loans`, `delete_orphan_nas`, `delete_orphan_qdrant`, `_dir_size_bytes` |
+| `webui/index.html` | Added "Housekeeping" button in sidebar + `housekeeping-panel` section with summary, checkbox table, purge/select-all buttons |
+| `webui/app.js` | Added `initHousekeeping()` IIFE: scan → render table → select all → purge with confirm dialog → inline results → auto-rescan |
 
 ### Punch List #2, #4, #5, #6: View Artifacts Bug Fix + Dashboard Audit (2026-03-06)
 | Component | What was done |
