@@ -163,9 +163,17 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 
 ---
 
-## Recently Completed Work (as of 2026-03-05)
+## Recently Completed Work (as of 2026-03-06)
 
 All TDD (red → green → regression). 81 tests passing.
+
+### Punch List #4, #5, #6: View Artifacts Bug Fix (2026-03-06)
+| Component | What was done |
+|-----------|--------------|
+| `webui/app.js` | Fixed double-base-URL bug in View Artifacts: `data-url` stored full URL (`base + "/tenants/..."`), but `apiFetch()` also prepends base → 404 on every artifact click. Changed to store path only (`"/tenants/..."`) |
+| `webui/app.js` | Added `r.ok` check in artifact click handler — HTTP errors now display cleanly instead of raw 404 body |
+| `webui/index.html` | Added cache-buster query string (`?v=20260306a`) to `app.js` script tag |
+| `punch_list.md` | Marked #4 (Income & DTI panel), #5 (Decision explanation), #6 (Markdown rendering) as DONE — all were already implemented, blocked by the View Artifacts URL bug |
 
 ### Punch List #3: Conditions Checklist View (2026-03-05)
 | Component | What was done |

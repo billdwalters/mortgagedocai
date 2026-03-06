@@ -1,6 +1,6 @@
 # MortgageDocAI — Project Status
 
-**Last Updated:** 2026-03-05
+**Last Updated:** 2026-03-06
 
 ## Current phase & AI context
 
@@ -1353,3 +1353,29 @@ The conditions panel UI (HTML, CSS, JS `renderConditionsPanel()`) was already fu
 The `uw_conditions` step runs after general Step13 retrieval (reuses the same retrieval pack via `--no-auto-retrieve`), using mistral at temp=0 with 1500 max tokens and 6000 evidence chars. Pipeline order is now: Step13 general → **Step12 uw_conditions** → Step13 income → Step12 income_analysis → Step12 uw_decision.
 
 81 tests passing (1 pre-existing flaky test `test_per_loan_lock_second_waits`). Regression smoke test passes.
+
+---
+
+## Punch List #4, #5, #6: View Artifacts Bug Fix (2026-03-06)
+
+Items #4 (Income & DTI panel), #5 (Decision explanation display), and #6 (Markdown rendering) were all already implemented in the UI:
+- `renderDtiCard()`, `renderIncomeCard()`, `renderDecisionCard()` render in the summary dashboard
+- `marked.min.js` v15.0.12 loaded; `renderMarkdownSafe()` sanitizes and renders markdown
+- `fetchArtifactJson()` fetches `dti.json`, `income_analysis.json`, `decision.json` correctly
+
+However, clicking any artifact in the **View Artifacts** panel showed `{"detail":"Not Found"}` due to a URL construction bug, which also prevented markdown preview (#6) from working.
+
+### Bug: Double-base URL
+
+**Root cause:** `webui/app.js` line ~812 built a **full URL** (`base + "/tenants/..."`) and stored it in `data-url`. The click handler passed this full URL to `apiFetch()`, which **also prepends the base**, creating `http://host:8000/http://host:8000/tenants/...` → always 404.
+
+**Compare:** `fetchArtifactJson()` passes a **path** (`"/tenants/..."`) to `apiFetch()` — works correctly.
+
+| Component | Fix |
+|-----------|-----|
+| `webui/app.js` | Removed `base +` from `data-url` value — now stores path only (`"/tenants/..."`) to match `fetchArtifactJson()` pattern |
+| `webui/app.js` | Added `r.ok` check in artifact click handler — HTTP errors now display as "Error: HTTP 404" instead of raw response body |
+| `webui/index.html` | Added cache-buster query string (`?v=20260306a`) to `app.js` script tag — browser was caching old JS |
+| `punch_list.md` | Marked #4, #5, #6 as DONE |
+
+81 tests passing. No code changes to backend.
