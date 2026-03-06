@@ -379,12 +379,12 @@ cmd_install() {
     warn "requirements.txt not found at ${PY_SOURCE}/requirements.txt"
   fi
 
-  # webui (served at /ui/static by loan_api.py)
-  if [[ -d "${PY_SOURCE}/webui" ]]; then
-    cp -rf "${PY_SOURCE}/webui" "${SCRIPTS_DIR}/webui"
-    echo "  [OK] webui deployed"
+  # webui (served at /ui/static by loan_api.py — WEBUI_DIR = REPO_ROOT / "webui")
+  if [[ -d "${REPO_ROOT_SVC}/webui" ]]; then
+    cp -rf "${REPO_ROOT_SVC}/webui" "${REPO_ROOT}/webui"
+    echo "  [OK] webui deployed to ${REPO_ROOT}/webui"
   else
-    warn "webui/ not found at ${PY_SOURCE}/webui — UI will be unavailable"
+    warn "webui/ not found at ${REPO_ROOT_SVC}/webui — UI will be unavailable"
   fi
 
   # ── 5. Python venv ───────────────────────────────────────────────────────────
