@@ -1676,4 +1676,148 @@
     loadTemplates();
   })();
 
+  // ——— Housekeeping (orphaned loan cleanup) ———
+  (function initHousekeeping() {
+    var hkBtn = el("housekeeping-btn");
+    var panel = el("housekeeping-panel");
+    var summaryEl = el("housekeeping-summary");
+    var listEl = el("housekeeping-list");
+    var actionsEl = el("housekeeping-actions");
+    var purgeBtn = el("housekeeping-purge-btn");
+    var selectAllBtn = el("housekeeping-select-all");
+    var msgEl = el("housekeeping-msg");
+    if (!hkBtn || !panel) return;
+
+    function showHkMsg(msg, type) {
+      if (!msgEl) return;
+      msgEl.textContent = msg;
+      msgEl.className = "source-validation-msg" + (type === "error" ? " error" : type === "ok" ? " ok" : "");
+      msgEl.hidden = false;
+      if (type === "ok") setTimeout(function () { msgEl.hidden = true; }, 8000);
+    }
+
+    function formatSize(bytes) {
+      if (bytes <= 0) return "—";
+      if (bytes < 1024) return bytes + " B";
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+      if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+      return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+    }
+
+    var orphanData = [];
+
+    function renderOrphans(data) {
+      orphanData = data.orphans || [];
+      summaryEl.innerHTML = "<p><strong>" + data.total_count + "</strong> orphaned loan(s) found, <strong>" +
+        data.deletable_count + "</strong> eligible for deletion.</p>";
+
+      if (!orphanData.length) {
+        listEl.innerHTML = "<p class='muted'>No orphaned data found.</p>";
+        actionsEl.hidden = true;
+        return;
+      }
+
+      var html = '<table style="width:100%;border-collapse:collapse;font-size:0.9rem">' +
+        '<thead><tr><th></th><th>Loan ID</th><th>Ingest</th><th>Chunk</th><th>Analyze</th><th>Qdrant</th><th>Status</th></tr></thead><tbody>';
+      orphanData.forEach(function (o) {
+        var disabled = o.has_active_job ? " disabled" : "";
+        var tag = o.has_active_job ? '<span style="color:#fbbf24">Active job</span>' : '<span style="color:#94a3b8">Deletable</span>';
+        html += '<tr>' +
+          '<td><input type="checkbox" class="hk-check" data-loan-id="' + o.loan_id + '"' + disabled + '></td>' +
+          '<td><strong>' + o.loan_id + '</strong></td>' +
+          '<td>' + (o.locations.nas_ingest ? formatSize(o.sizes.nas_ingest) : "—") + '</td>' +
+          '<td>' + (o.locations.nas_chunk ? formatSize(o.sizes.nas_chunk) : "—") + '</td>' +
+          '<td>' + (o.locations.nas_analyze ? formatSize(o.sizes.nas_analyze) : "—") + '</td>' +
+          '<td>' + (o.qdrant_vectors > 0 ? o.qdrant_vectors + " vectors" : o.qdrant_vectors === 0 ? "0" : "N/A") + '</td>' +
+          '<td>' + tag + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      listEl.innerHTML = html;
+
+      actionsEl.hidden = data.deletable_count === 0;
+    }
+
+    function getSelectedIds() {
+      var checks = listEl.querySelectorAll(".hk-check:checked");
+      var ids = [];
+      checks.forEach(function (cb) { ids.push(cb.getAttribute("data-loan-id")); });
+      return ids;
+    }
+
+    function scanOrphans() {
+      var tenantId = getTenantId();
+      summaryEl.innerHTML = "<p class='muted'>Scanning...</p>";
+      listEl.innerHTML = "";
+      actionsEl.hidden = true;
+      msgEl.hidden = true;
+      hkBtn.disabled = true;
+
+      apiFetch("/tenants/" + tenantId + "/housekeeping/orphans")
+        .then(function (data) {
+          renderOrphans(data);
+        })
+        .catch(function (err) {
+          summaryEl.innerHTML = "";
+          showHkMsg("Scan failed: " + (err.message || err), "error");
+        })
+        .finally(function () {
+          hkBtn.disabled = false;
+        });
+    }
+
+    hkBtn.addEventListener("click", function () {
+      // Show housekeeping panel, hide others
+      ["main-overview", "progress-panel", "artifacts-panel", "conditions-panel"].forEach(function (id) {
+        var p = el(id); if (p) p.hidden = true;
+      });
+      panel.hidden = false;
+      scanOrphans();
+    });
+
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener("click", function () {
+        var checks = listEl.querySelectorAll(".hk-check:not(:disabled)");
+        var allChecked = true;
+        checks.forEach(function (cb) { if (!cb.checked) allChecked = false; });
+        checks.forEach(function (cb) { cb.checked = !allChecked; });
+      });
+    }
+
+    if (purgeBtn) {
+      purgeBtn.addEventListener("click", function () {
+        var ids = getSelectedIds();
+        if (!ids.length) { showHkMsg("No loans selected", "error"); return; }
+
+        if (!confirm("Permanently delete data for " + ids.length + " loan(s)?\n\nThis removes NAS files and Qdrant vectors. This cannot be undone.")) return;
+
+        var tenantId = getTenantId();
+        purgeBtn.disabled = true;
+        msgEl.hidden = true;
+
+        apiFetch("/tenants/" + tenantId + "/housekeeping/orphans/purge", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ loan_ids: ids, skip_qdrant: false }),
+        })
+          .then(function (data) {
+            var msgs = [];
+            msgs.push(data.deleted_count + " loan(s) purged.");
+            var errors = (data.results || []).filter(function (r) { return !r.deleted; });
+            if (errors.length) {
+              msgs.push(errors.length + " skipped: " + errors.map(function (e) { return e.loan_id + " (" + e.reason + ")"; }).join(", "));
+            }
+            showHkMsg(msgs.join(" "), data.deleted_count > 0 ? "ok" : "error");
+            // Re-scan to refresh list
+            scanOrphans();
+          })
+          .catch(function (err) {
+            showHkMsg("Purge failed: " + (err.message || err), "error");
+          })
+          .finally(function () {
+            purgeBtn.disabled = false;
+          });
+      });
+    }
+  })();
+
 })();

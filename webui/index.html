@@ -38,6 +38,7 @@
     <aside class="sidebar">
       <section class="sidebar-section">
         <button type="button" id="refresh-loans" class="btn-primary">Refresh Loans</button>
+        <button type="button" id="housekeeping-btn" class="btn-secondary" style="margin-top:0.5rem;width:100%">Housekeeping</button>
         <ul id="loan-list" class="loan-list"></ul>
       </section>
     </aside>
@@ -144,6 +145,18 @@
         <div id="conditions-list" class="conditions-list"></div>
       </section>
 
+      <section id="housekeeping-panel" class="section" hidden>
+        <h2>Database Housekeeping</h2>
+        <p class="muted small">Loans removed from the source folder but still have data in the database.</p>
+        <div id="housekeeping-summary"></div>
+        <div id="housekeeping-list"></div>
+        <div id="housekeeping-actions" hidden>
+          <button type="button" id="housekeeping-purge-btn" class="btn-cta">Purge Selected</button>
+          <button type="button" id="housekeeping-select-all" class="btn-link">Select All</button>
+        </div>
+        <p id="housekeeping-msg" class="source-validation-msg" hidden></p>
+      </section>
+
       <section id="chat-panel" class="section chat-panel">
         <h2>Ask a question</h2>
         <div id="chat-messages" class="chat-messages"></div>
@@ -174,6 +187,6 @@
   </div>
 
   <script src="/ui/static/marked.min.js"></script>
-  <script src="/ui/static/app.js?v=20260306b"></script>
+  <script src="/ui/static/app.js?v=20260306c"></script>
 </body>
 </html>

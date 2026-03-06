@@ -1168,6 +1168,149 @@ def list_jobs(limit: int = 50, status: str | None = None) -> dict[str, list[dict
 
 
 # ---------------------------------------------------------------------------
+# Housekeeping — orphaned loan detection and cleanup
+# ---------------------------------------------------------------------------
+from cleanup_orphans import (
+    OrphanedLoan,
+    find_orphaned_loans,
+    delete_orphan_nas,
+    delete_orphan_qdrant,
+    _dir_size_bytes,
+)
+from lib import DEFAULT_QDRANT_URL, qdrant_collection_name
+
+
+class PurgeRequestBody(BaseModel):
+    loan_ids: List[str] = Field(..., max_length=20)
+    skip_qdrant: bool = False
+
+
+@app.get("/tenants/{tenant_id}/housekeeping/orphans")
+def scan_orphans(tenant_id: str) -> dict[str, Any]:
+    """Scan for orphaned loans (source folder removed but data remains)."""
+    orphans = find_orphaned_loans(
+        tenant_id=tenant_id,
+        source_root=SOURCE_LOANS_ROOT,
+        source_categories=SOURCE_LOANS_CATEGORIES,
+        nas_ingest=NAS_INGEST,
+        nas_chunk=NAS_CHUNK,
+        nas_analyze=NAS_ANALYZE,
+    )
+
+    # Try connecting to Qdrant for vector counts
+    qdrant = None
+    collection = ""
+    try:
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+        qdrant = QdrantClient(url=DEFAULT_QDRANT_URL, timeout=10)
+        collection = qdrant_collection_name(tenant_id)
+    except Exception:
+        qdrant = None
+
+    results = []
+    for orphan in orphans:
+        sizes = {}
+        for label, base in [("nas_ingest", NAS_INGEST), ("nas_chunk", NAS_CHUNK), ("nas_analyze", NAS_ANALYZE)]:
+            if orphan.locations.get(label):
+                loan_dir = base / "tenants" / tenant_id / "loans" / orphan.loan_id
+                sizes[label] = _dir_size_bytes(loan_dir)
+            else:
+                sizes[label] = 0
+
+        qdrant_vectors = 0
+        if qdrant and collection:
+            try:
+                from qdrant_client.models import FieldCondition, Filter, MatchValue
+                count_result = qdrant.count(
+                    collection_name=collection,
+                    count_filter=Filter(must=[
+                        FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
+                        FieldCondition(key="loan_id", match=MatchValue(value=orphan.loan_id)),
+                    ]),
+                    exact=True,
+                )
+                qdrant_vectors = count_result.count
+            except Exception:
+                qdrant_vectors = -1  # signal error
+
+        results.append({
+            "loan_id": orphan.loan_id,
+            "locations": orphan.locations,
+            "has_active_job": orphan.has_active_job,
+            "sizes": sizes,
+            "qdrant_vectors": qdrant_vectors,
+        })
+
+    deletable = [r for r in results if not r["has_active_job"]]
+    return {
+        "orphans": results,
+        "total_count": len(results),
+        "deletable_count": len(deletable),
+    }
+
+
+@app.post("/tenants/{tenant_id}/housekeeping/orphans/purge")
+def purge_orphans(tenant_id: str, body: PurgeRequestBody) -> dict[str, Any]:
+    """Delete selected orphaned loans after re-verifying they are still orphaned."""
+    if len(body.loan_ids) > 20:
+        raise HTTPException(status_code=400, detail="Maximum 20 loans per purge request")
+
+    # Re-verify orphan status (safety: re-run detection)
+    orphans = find_orphaned_loans(
+        tenant_id=tenant_id,
+        source_root=SOURCE_LOANS_ROOT,
+        source_categories=SOURCE_LOANS_CATEGORIES,
+        nas_ingest=NAS_INGEST,
+        nas_chunk=NAS_CHUNK,
+        nas_analyze=NAS_ANALYZE,
+    )
+    orphan_map = {o.loan_id: o for o in orphans}
+
+    # Connect Qdrant if needed
+    qdrant = None
+    collection = ""
+    if not body.skip_qdrant:
+        try:
+            from qdrant_client import QdrantClient
+            qdrant = QdrantClient(url=DEFAULT_QDRANT_URL, timeout=10)
+            collection = qdrant_collection_name(tenant_id)
+        except Exception:
+            qdrant = None
+
+    results = []
+    deleted_count = 0
+    for loan_id in body.loan_ids:
+        orphan = orphan_map.get(loan_id)
+        if orphan is None:
+            results.append({"loan_id": loan_id, "deleted": False, "reason": "not_orphaned"})
+            continue
+        if orphan.has_active_job:
+            results.append({"loan_id": loan_id, "deleted": False, "reason": "active_job"})
+            continue
+
+        # Delete Qdrant vectors first
+        qdrant_count = 0
+        if not body.skip_qdrant and qdrant and collection:
+            try:
+                qdrant_count = delete_orphan_qdrant(qdrant, collection, tenant_id, loan_id)
+            except Exception:
+                qdrant_count = -1
+
+        # Delete NAS dirs
+        nas_stats = delete_orphan_nas(tenant_id, loan_id, NAS_INGEST, NAS_CHUNK, NAS_ANALYZE)
+        deleted_count += 1
+        results.append({
+            "loan_id": loan_id,
+            "deleted": True,
+            "qdrant_vectors": qdrant_count,
+            "nas": nas_stats,
+        })
+
+    return {"results": results, "deleted_count": deleted_count}
+
+
+# ---------------------------------------------------------------------------
 # Web UI (static single-page app)
 # IMPORTANT: Access via http://<server>:8000/ui — file:// is not supported.
 # ---------------------------------------------------------------------------
