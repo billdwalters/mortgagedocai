@@ -1356,9 +1356,9 @@ The `uw_conditions` step runs after general Step13 retrieval (reuses the same re
 
 ---
 
-## Punch List #4, #5, #6: View Artifacts Bug Fix (2026-03-06)
+## Punch List #2, #4, #5, #6: View Artifacts Bug Fix + Dashboard Audit (2026-03-06)
 
-Items #4 (Income & DTI panel), #5 (Decision explanation display), and #6 (Markdown rendering) were all already implemented in the UI:
+Items #2 (Loan summary dashboard), #4 (Income & DTI panel), #5 (Decision explanation display), and #6 (Markdown rendering) were all already implemented in the UI:
 - `renderDtiCard()`, `renderIncomeCard()`, `renderDecisionCard()` render in the summary dashboard
 - `marked.min.js` v15.0.12 loaded; `renderMarkdownSafe()` sanitizes and renders markdown
 - `fetchArtifactJson()` fetches `dti.json`, `income_analysis.json`, `decision.json` correctly
@@ -1376,6 +1376,6 @@ However, clicking any artifact in the **View Artifacts** panel showed `{"detail"
 | `webui/app.js` | Removed `base +` from `data-url` value — now stores path only (`"/tenants/..."`) to match `fetchArtifactJson()` pattern |
 | `webui/app.js` | Added `r.ok` check in artifact click handler — HTTP errors now display as "Error: HTTP 404" instead of raw response body |
 | `webui/index.html` | Added cache-buster query string (`?v=20260306a`) to `app.js` script tag — browser was caching old JS |
-| `punch_list.md` | Marked #4, #5, #6 as DONE |
+| `punch_list.md` | Marked #2, #4, #5, #6 as DONE |
 
 81 tests passing. No code changes to backend.

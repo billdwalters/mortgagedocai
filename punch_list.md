@@ -6,8 +6,9 @@ Items to address. Grouped by category, roughly prioritized within each group.
 
 ## Web UI — High Impact
 
-### 2. Loan summary dashboard after processing
-Show a quick-glance view when a loan is selected: PASS/FAIL/UNKNOWN decision badge, DTI ratio, monthly income total, condition count. Currently you have to open raw JSON artifacts to see any of this.
+### ~~2. Loan summary dashboard after processing~~ DONE (2026-03-06)
+~~Show a quick-glance view when a loan is selected: PASS/FAIL/UNKNOWN decision badge, DTI ratio, monthly income total, condition count. Currently you have to open raw JSON artifacts to see any of this.~~
+Already implemented: `loadSummaryDashboard()` fires 5 parallel fetches on loan selection and renders 4 cards (Underwriting Decision with PASS/FAIL/UNKNOWN badge, DTI Analysis with bar charts, Income Breakdown with line items, Processing Details). Conditions panel renders separately with count and timing summary.
 
 ### ~~3. Conditions checklist view~~ DONE (2026-03-05)
 ~~`conditions.json` has structured data (category, timing, description, citations) but is only visible as raw JSON in the artifacts tab. Display as a formatted, categorized table or checklist.~~
