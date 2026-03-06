@@ -809,7 +809,7 @@
           files.sort(function (a, b) { return (a.name || "").localeCompare(b.name || ""); });
           files.forEach(function (f) {
             if (!f.exists) return;
-            const url = base + "/tenants/" + encodeURIComponent(getTenantId()) + "/loans/" + encodeURIComponent(selectedLoanId) + "/runs/" + encodeURIComponent(runId) + "/artifacts/" + encodeURIComponent(prof.name) + "/" + encodeURIComponent(f.name);
+            const url = "/tenants/" + encodeURIComponent(getTenantId()) + "/loans/" + encodeURIComponent(selectedLoanId) + "/runs/" + encodeURIComponent(runId) + "/artifacts/" + encodeURIComponent(prof.name) + "/" + encodeURIComponent(f.name);
             const label = f.name === "answer.md" ? "Answer" : f.name === "answer.json" ? "Answer (JSON)" : f.name === "citations.jsonl" ? "Citations" : f.name;
             html += "<a class=\"file-link\" data-url=\"" + url.replace(/"/g, "&quot;") + "\" data-filename=\"" + (f.name || "").replace(/"/g, "&quot;") + "\" href=\"#\">" + escapeHtml(label) + "</a> ";
           });
@@ -826,7 +826,10 @@
             previewContent.textContent = "";
             previewContent.hidden = false;
             if (previewMarkdown) { previewMarkdown.innerHTML = ""; previewMarkdown.hidden = true; }
-            apiFetch(url).then(function (r) { return r.text(); }).then(function (text) {
+            apiFetch(url).then(function (r) {
+              if (!r.ok) throw new Error("HTTP " + r.status);
+              return r.text();
+            }).then(function (text) {
               if (filename.endsWith(".md")) {
                 var rendered = renderMarkdownSafe(text);
                 if (rendered !== null && previewMarkdown) {
