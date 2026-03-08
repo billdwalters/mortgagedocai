@@ -607,6 +607,15 @@
     const seen = {};
     phases.forEach(function (p) { seen[p.name] = true; });
     const lastPhase = phases.length ? phases[phases.length - 1].name : null;
+    // Build a map of phase name -> duration (seconds) by diffing consecutive timestamps
+    var phaseDurations = {};
+    for (var i = 0; i < phases.length; i++) {
+      var startTs = phases[i].ts ? new Date(phases[i].ts).getTime() : NaN;
+      var endTs = (i + 1 < phases.length && phases[i + 1].ts) ? new Date(phases[i + 1].ts).getTime() : NaN;
+      if (!isNaN(startTs) && !isNaN(endTs)) {
+        phaseDurations[phases[i].name] = (endTs - startTs) / 1000;
+      }
+    }
     let html = "";
     STEPPER_ORDER.forEach(function (name) {
       const label = PHASE_LABELS[name] || name;
@@ -614,7 +623,10 @@
       const current = lastPhase === name;
       let cls = current ? "stepper-step current" : (done ? "stepper-step done" : "stepper-step");
       if (current && name === "FAIL") cls += " stepper-fail";
-      html += "<span class=\"" + cls + "\" title=\"" + escapeHtml(name) + "\">" + escapeHtml(label) + "</span>";
+      var dur = phaseDurations[name];
+      var durStr = dur != null ? " (" + formatDuration(dur) + ")" : "";
+      var title = escapeHtml(name) + (dur != null ? " — " + formatDuration(dur) : "");
+      html += "<span class=\"" + cls + "\" title=\"" + title + "\">" + escapeHtml(label) + durStr + "</span>";
     });
     container.innerHTML = html;
   }
@@ -678,6 +690,17 @@
       if (el("progress-status-value")) el("progress-status-value").textContent = job.status || "—";
       if (el("progress-started")) el("progress-started").textContent = formatTimestamp(job.started_at_utc || "—");
       if (el("progress-finished")) el("progress-finished").textContent = formatTimestamp(job.finished_at_utc || "—");
+      // Elapsed time: finished - started, or wall-clock if still running
+      if (el("progress-elapsed")) {
+        var startMs = job.started_at_utc ? new Date(job.started_at_utc).getTime() : NaN;
+        var endMs = job.finished_at_utc ? new Date(job.finished_at_utc).getTime() : NaN;
+        if (!isNaN(startMs)) {
+          var elapsed = ((isNaN(endMs) ? Date.now() : endMs) - startMs) / 1000;
+          el("progress-elapsed").textContent = formatDuration(elapsed);
+        } else {
+          el("progress-elapsed").textContent = "—";
+        }
+      }
       const stdout = job.stdout != null ? job.stdout : "";
       if (el("log-stdout")) el("log-stdout").textContent = stdout || "(empty)";
       if (el("log-stderr")) el("log-stderr").textContent = (job.stderr != null ? job.stderr : "") || "(empty)";
@@ -811,7 +834,12 @@
             if (!f.exists) return;
             const url = "/tenants/" + encodeURIComponent(getTenantId()) + "/loans/" + encodeURIComponent(selectedLoanId) + "/runs/" + encodeURIComponent(runId) + "/artifacts/" + encodeURIComponent(prof.name) + "/" + encodeURIComponent(f.name);
             const label = f.name === "answer.md" ? "Answer" : f.name === "answer.json" ? "Answer (JSON)" : f.name === "citations.jsonl" ? "Citations" : f.name;
-            html += "<a class=\"file-link\" data-url=\"" + url.replace(/"/g, "&quot;") + "\" data-filename=\"" + (f.name || "").replace(/"/g, "&quot;") + "\" href=\"#\">" + escapeHtml(label) + "</a> ";
+            var meta = "";
+            if (f.size_bytes != null) meta += formatBytes(f.size_bytes);
+            if (f.mtime_utc) meta += (meta ? " · " : "") + formatTimestamp(f.mtime_utc);
+            html += "<a class=\"file-link\" data-url=\"" + url.replace(/"/g, "&quot;") + "\" data-filename=\"" + (f.name || "").replace(/"/g, "&quot;") + "\" href=\"#\">" + escapeHtml(label) + "</a>";
+            if (meta) html += "<span class=\"artifact-meta muted small\">" + meta + "</span>";
+            html += " ";
           });
           html += "</div>";
         });

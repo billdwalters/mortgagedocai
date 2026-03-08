@@ -423,6 +423,7 @@ body {
   font-size: 0.875rem;
 }
 .artifacts-index .file-link:hover { text-decoration: underline; }
+.artifacts-index .artifact-meta { margin-right: 0.75rem; }
 .artifact-preview-wrap pre {
   max-height: 320px;
 }

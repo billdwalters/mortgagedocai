@@ -26,8 +26,9 @@ Already implemented: `renderDecisionCard()` renders the UW decision prominently 
 ~~These files are written as markdown but displayed as raw text in the artifact preview. Add a lightweight markdown renderer (e.g. markdown-it or showdown.js) for formatted display.~~
 Already implemented: `marked.min.js` v15.0.12 loaded in index.html; `renderMarkdownSafe()` sanitizes and renders markdown. The artifact preview click handler detects `.md` files and renders them via marked. Fixed View Artifacts double-base-URL bug that was causing 404s, preventing markdown preview from working.
 
-### 7. Document inventory
-No visibility into which documents were ingested, page counts, or if expected documents are missing (pay stubs, tax returns, W-2s, etc.). `intake_manifest.json` and `processing_run.json` have this data — surface it.
+### ~~7. Document inventory~~ DONE (2026-03-06)
+~~No visibility into which documents were ingested, page counts, or if expected documents are missing (pay stubs, tax returns, W-2s, etc.). `intake_manifest.json` and `processing_run.json` have this data — surface it.~~
+Already implemented: `fetchDocumentInventory()` + `renderInventoryCard()` in app.js; "Document Inventory" summary card in index.html. Fetches from `/runs/{run_id}/document_inventory` and renders in the summary dashboard.
 
 ---
 

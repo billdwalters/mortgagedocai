@@ -150,24 +150,36 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 **Form Fill:**
 - `formfill.py` — Form registry (`FORM_TEMPLATES`), `FieldMapping`/`FormTemplate` dataclasses, `fill_form()` filler logic (openpyxl)
 
-**Tests (81 passing as of 2026-03-05):**
+**Tests (91 passing as of 2026-03-08: 81 main + 10 cleanup_orphans):**
 - `test_formfill.py` — Form registry, JSON path resolution, filler logic (19 tests)
-- `test_job_hardening.py` — Job workflow resilience
-- `test_source_path_validation.py` — Source path validation
+- `test_job_hardening.py` — Job workflow resilience (10 tests)
+- `test_source_path_validation.py` — Source path validation (5 tests)
 - `test_step12_uw_conditions.py` — UW conditions extraction (17 tests)
 - `test_step12_postprocess_conditions.py` — Condition postprocessing/dedup (13 tests)
 - `test_step12_version_blob.py` — Unified version.json audit trail (8 tests)
 - `test_step13_chunk_index.py` — Chunk index loading (9 tests)
+- `test_cleanup_orphans.py` — Orphaned loan detection and cleanup (10 tests)
 
 **Note:** `test_step13_chunk_index.py` mocks `qdrant_client` at import time — safe to run on Windows dev machine without full production deps.
 
 ---
 
-## Recently Completed Work (as of 2026-03-06)
+## Recently Completed Work (as of 2026-03-08)
 
-All TDD (red → green → regression). 81 tests passing (+ 10 cleanup_orphans tests).
+All TDD (red → green → regression). 91 tests passing (81 main + 10 cleanup_orphans).
 
-### Punch List #9: Database Housekeeping UI (2026-03-06)
+### Punch List #9 (per-step timing) + #10 (artifact metadata) (2026-03-08)
+| Component | What was done |
+|-----------|--------------|
+| `webui/app.js` | `setJobFields()` now computes elapsed time (finished − started, or wall-clock if running) and displays in `#progress-elapsed` |
+| `webui/app.js` | `renderStepper()` now diffs consecutive PHASE timestamps to show per-step duration inline, e.g. "Process (45.2s)" |
+| `webui/app.js` | Artifact file list now shows `size_bytes` (via `formatBytes`) and `mtime_utc` (via `formatTimestamp`) next to each file link |
+| `webui/app.js` | `formatDuration()` utility (already existed) now wired to elapsed + stepper |
+| `webui/index.html` | Added `#progress-elapsed` span in progress times line |
+| `webui/styles.css` | Added `.artifact-meta` spacing rule |
+| `punch_list.md` | Marked #7 as DONE |
+
+### Punch List #9 (housekeeping UI): Database Housekeeping UI (2026-03-06)
 | Component | What was done |
 |-----------|--------------|
 | `loan_api.py` | Added `GET /tenants/{t}/housekeeping/orphans` — scans for orphaned loans (source removed, NAS/Qdrant data remains), returns sizes + Qdrant vector counts |

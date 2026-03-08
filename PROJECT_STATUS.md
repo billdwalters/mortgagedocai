@@ -1,6 +1,6 @@
 # MortgageDocAI — Project Status
 
-**Last Updated:** 2026-03-06
+**Last Updated:** 2026-03-08
 
 ## Current phase & AI context
 
@@ -1407,3 +1407,33 @@ However, clicking any artifact in the **View Artifacts** panel showed `{"detail"
 | `punch_list.md` | Marked #2, #4, #5, #6 as DONE |
 
 81 tests passing. No code changes to backend.
+
+---
+
+## Punch List #9 (per-step timing) + #10 (artifact metadata) (2026-03-08)
+
+### Per-step timing (#9)
+
+Added elapsed time and per-step duration display to the Web UI progress panel.
+
+| Component | What was done |
+|-----------|--------------|
+| `webui/app.js` | `setJobFields()` computes elapsed time: `finished_at_utc − started_at_utc` for completed jobs, or `now − started_at_utc` for in-progress jobs (updates each poll cycle) |
+| `webui/app.js` | `renderStepper()` diffs consecutive PHASE marker timestamps to compute per-step duration; displays inline in each stepper label, e.g. "Process (45.2s)", and in tooltip on hover |
+| `webui/app.js` | `formatDuration()` utility (previously unused) now wired to both elapsed and stepper |
+| `webui/index.html` | Added `<span id="progress-elapsed">` to progress times line |
+
+### Artifact file metadata (#10)
+
+API already returned `size_bytes` and `mtime_utc` per artifact file — UI was ignoring them.
+
+| Component | What was done |
+|-----------|--------------|
+| `webui/app.js` | Artifact file list now shows file size (via `formatBytes`) and timestamp (via `formatTimestamp`) as muted text next to each file link |
+| `webui/styles.css` | Added `.artifact-meta` spacing rule |
+
+### Punch List #7 marked DONE
+
+`punch_list.md` updated — document inventory was already implemented (commit `7de310b`, 2026-03-06) but not marked done.
+
+No backend changes. No new tests (UI-only changes).
