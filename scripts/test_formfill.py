@@ -22,8 +22,8 @@ from formfill import (
 # Registry tests
 # ---------------------------------------------------------------------------
 
-def test_registry_has_three_templates():
-    assert len(FORM_TEMPLATES) == 3
+def test_registry_has_eight_templates():
+    assert len(FORM_TEMPLATES) == 8
 
 
 def test_registry_keys_match_template_ids():
@@ -49,6 +49,41 @@ def test_registry_va_irrrl_exists():
     t = FORM_TEMPLATES["va_irrrl_recoupment_calc"]
     assert t.display_name == "VA IRRRL Recoupment Calc"
     assert t.category == "VA"
+
+
+def test_registry_fha_max_mtg_initial_exists():
+    t = FORM_TEMPLATES["fha_max_mtg_initial"]
+    assert t.display_name == "FHA Max Mtg Worksheet (Initial)"
+    assert t.category == "FHA"
+    assert len(t.mappings) >= 1
+
+
+def test_registry_va_irrrl_worksheet_exists():
+    t = FORM_TEMPLATES["va_irrrl_worksheet"]
+    assert t.display_name == "VA-IRRRL Worksheet"
+    assert t.category == "VA"
+    assert len(t.mappings) >= 2
+
+
+def test_registry_va_max_mortgage_exists():
+    t = FORM_TEMPLATES["va_max_mortgage"]
+    assert t.display_name == "VA Max Mortgage Worksheet"
+    assert t.category == "VA"
+    assert len(t.mappings) >= 1
+
+
+def test_registry_income_calc_uwm_exists():
+    t = FORM_TEMPLATES["income_calc_uwm"]
+    assert t.display_name == "Income Calc (UWM)"
+    assert t.category == "Income"
+    assert len(t.mappings) >= 2
+
+
+def test_registry_bank_stmt_loan_calc_exists():
+    t = FORM_TEMPLATES["bank_stmt_loan_calc"]
+    assert t.display_name == "Bank Statement Loan Calculator"
+    assert t.category == "Income"
+    assert len(t.mappings) >= 1
 
 
 def test_all_templates_have_xlsx_files():

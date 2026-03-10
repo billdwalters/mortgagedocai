@@ -142,6 +142,71 @@ _VA_IRRRL_MAPPINGS = (
                  label="Back-end DTI (proposed rate placeholder)"),
 )
 
+# ---- FHA Max Mtg Worksheet (Initial / Streamline) ----
+# Sheet: "Streamline Worksheet"
+# F5=Outstanding principal balance, F6=interest due, F7=monthly MIP,
+# F8=late charges, F9=escrow shortages, F12=original principal balance,
+# F18=MIP refund, F22=MIP factor (0.0175), F30=note date, F33=first payment date,
+# F38=remaining term, F43/F44=amortization type, F47=current rate, F51=proposed rate
+# Most fields require specific mortgage details not extracted by pipeline.
+_FHA_MAX_MTG_INITIAL_MAPPINGS = (
+    FieldMapping("F5", "dti", "housing_payment_used", CellType.CURRENCY,
+                 sheet="Streamline Worksheet",
+                 label="PITIA (reference for outstanding principal)"),
+)
+
+# ---- VA-IRRRL Worksheet ----
+# Sheet: "VA IRRRL Cashout Worksheet"
+# C3=Borrower, E9=Prior VA first payment date, I16=Current PITIA,
+# I18=New PITIA, I21=Total fees, E28=Current rate, I28/I30=Program type,
+# E30=New rate
+_VA_IRRRL_WORKSHEET_MAPPINGS = (
+    FieldMapping("C3", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 sheet="VA IRRRL Cashout Worksheet",
+                 label="Borrower name"),
+    FieldMapping("I16", "income_analysis", "proposed_pitia.value", CellType.CURRENCY,
+                 sheet="VA IRRRL Cashout Worksheet",
+                 label="Current PITIA"),
+)
+
+# ---- VA Max Mortgage Worksheet ----
+# Sheet: "VA_Maximum_Mortgage_Worksheet"
+# D11=Borrower(s), K11=Date, E13=Prior VA first payment date,
+# F17=Loan type, E18=State, H18=County, K18=Limit amount,
+# J21/J22=Entitlement, J23=Previously used, J27=Property value
+_VA_MAX_MORTGAGE_MAPPINGS = (
+    FieldMapping("D11", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 sheet="VA_Maximum_Mortgage_Worksheet",
+                 label="Borrower name"),
+)
+
+# ---- Income Calc (UWM) ----
+# Sheet: "Income Calculator"
+# C4=Borrower name, C5=Employer name, C7=Start date, C24=Pay period end date,
+# C27=Pay frequency, C28=Rate of pay, C29=Hours/week,
+# C36=YTD base income, C37=Prior year W-2, C38=2-year prior W-2,
+# C40-C43=YTD OT/Bonus/Commission/Tips
+_INCOME_CALC_UWM_MAPPINGS = (
+    FieldMapping("C4", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 sheet="Income Calculator",
+                 label="Borrower name"),
+    FieldMapping("C5", "income_analysis", "borrowers.0.employer", CellType.TEXT,
+                 sheet="Income Calculator",
+                 label="Employer name"),
+)
+
+# ---- Bank Statement Loan Calculator (UWM) ----
+# 7 sheets: Personal/Business Asset Analysis, Business Assets Calculation,
+# Reserve Calculator, Subject Property Reserves, Summary, Lists
+# Primarily deposit-by-deposit analysis — pipeline cannot fill individual deposits.
+# A2=Business name, A4/B4=Loan amount on Personal/Business sheets
+_BANK_STMT_LOAN_CALC_MAPPINGS = (
+    FieldMapping("A2", "income_analysis", "borrowers.0.employer", CellType.TEXT,
+                 sheet="Personal Assets Analysis & Calc",
+                 label="Business name (from employer)"),
+)
+
+
 FORM_TEMPLATES: dict[str, FormTemplate] = {}
 
 
@@ -174,6 +239,51 @@ _register(FormTemplate(
     filename="va_irrrl_recoupment_calc.xlsx",
     description="VA IRRRL recoupment comparison. Pre-fills existing P&I and loan amounts from pipeline data.",
     mappings=_VA_IRRRL_MAPPINGS,
+))
+
+_register(FormTemplate(
+    template_id="fha_max_mtg_initial",
+    display_name="FHA Max Mtg Worksheet (Initial)",
+    category="FHA",
+    filename="FHA Max Mtg Worksheet (Initial).xlsx",
+    description="FHA streamline maximum mortgage worksheet. Pre-fills PITIA from pipeline data; remaining fields require manual entry.",
+    mappings=_FHA_MAX_MTG_INITIAL_MAPPINGS,
+))
+
+_register(FormTemplate(
+    template_id="va_irrrl_worksheet",
+    display_name="VA-IRRRL Worksheet",
+    category="VA",
+    filename="VA-IRRRL Worksheet.xlsx",
+    description="VA IRRRL and cash-out worksheet. Pre-fills borrower name and current PITIA from pipeline data.",
+    mappings=_VA_IRRRL_WORKSHEET_MAPPINGS,
+))
+
+_register(FormTemplate(
+    template_id="va_max_mortgage",
+    display_name="VA Max Mortgage Worksheet",
+    category="VA",
+    filename="VA Max Mortgage Worksheet.xlsm",
+    description="VA maximum mortgage and entitlement calculation. Pre-fills borrower name from pipeline data.",
+    mappings=_VA_MAX_MORTGAGE_MAPPINGS,
+))
+
+_register(FormTemplate(
+    template_id="income_calc_uwm",
+    display_name="Income Calc (UWM)",
+    category="Income",
+    filename="Income Calc (UWM).xlsm",
+    description="UWM variable income calculator (29 sheets). Pre-fills borrower and employer name from pipeline data.",
+    mappings=_INCOME_CALC_UWM_MAPPINGS,
+))
+
+_register(FormTemplate(
+    template_id="bank_stmt_loan_calc",
+    display_name="Bank Statement Loan Calculator",
+    category="Income",
+    filename="Bank Statement Loan Calculator - UWM.xlsm",
+    description="Bank statement loan calculator with deposit analysis. Pre-fills business name from pipeline data; deposit details require manual entry.",
+    mappings=_BANK_STMT_LOAN_CALC_MAPPINGS,
 ))
 
 
