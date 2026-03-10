@@ -843,6 +843,7 @@
           });
           html += "</div>";
         });
+        if (!html) html = "<p class=\"muted\">No artifacts found for this run.</p>";
         indexEl.innerHTML = html;
         indexEl.querySelectorAll(".file-link[data-url]").forEach(function (a) {
           a.addEventListener("click", function (e) {
@@ -1379,6 +1380,8 @@
 
     function appendMessage(role, text) {
       if (!messagesEl) return;
+      var ph = el("chat-placeholder");
+      if (ph) ph.remove();
       const div = document.createElement("div");
       div.className = "chat-msg chat-msg-" + role;
       const inner = document.createElement("div");
