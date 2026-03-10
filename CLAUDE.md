@@ -150,13 +150,14 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 **Form Fill:**
 - `formfill.py` — Form registry (`FORM_TEMPLATES`), `FieldMapping`/`FormTemplate` dataclasses, `fill_form()` filler logic (openpyxl)
 
-**Tests (91 passing as of 2026-03-08: 81 main + 10 cleanup_orphans):**
+**Tests (112 passing as of 2026-03-10: 102 main + 10 cleanup_orphans):**
 - `test_formfill.py` — Form registry, JSON path resolution, filler logic (19 tests)
 - `test_job_hardening.py` — Job workflow resilience (10 tests)
 - `test_source_path_validation.py` — Source path validation (5 tests)
 - `test_step12_uw_conditions.py` — UW conditions extraction (17 tests)
 - `test_step12_postprocess_conditions.py` — Condition postprocessing/dedup (13 tests)
 - `test_step12_version_blob.py` — Unified version.json audit trail (8 tests)
+- `test_step12_income_analysis.py` — Borrowers, frequencies, DTI, UW decision (21 tests)
 - `test_step13_chunk_index.py` — Chunk index loading (9 tests)
 - `test_cleanup_orphans.py` — Orphaned loan detection and cleanup (10 tests)
 
@@ -166,7 +167,19 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 
 ## Recently Completed Work (as of 2026-03-10)
 
-All TDD (red → green → regression). 91 tests passing (81 main + 10 cleanup_orphans).
+All TDD (red → green → regression). 112 tests passing (102 main + 10 cleanup_orphans).
+
+### Income Analysis + DTI + UW Decision Hardening (2026-03-10)
+| Component | What was done |
+|-----------|--------------|
+| `step12_analyze.py` | LLM prompt now requests `borrowers` array (name, role, employer, employment_type) and `borrower_name`/`employer` on income items |
+| `step12_analyze.py` | `_normalize_income_analysis()` extracts + normalizes borrowers; income items carry `borrower_name` and `employer` (null if absent) |
+| `step12_analyze.py` | `biweekly` and `weekly` added to `_INCOME_FREQUENCIES_CANONICAL` with alias normalization |
+| `step12_analyze.py` | `_compute_dti()` converts biweekly (×26÷12) and weekly (×52÷12) to monthly equivalents |
+| `step12_analyze.py` | `_PROGRAM_THRESHOLDS` dict: Conventional (28/45%), FHA (31/43%), VA (none/41%), USDA (29/41%) |
+| `step12_analyze.py` | `_build_uw_decision()` enforces front-end DTI when `max_front_end_dti` is set; multiple reasons in output |
+| `step12_analyze.py` | Schema versions bumped: `income_analysis` v1→v2, `uw_decision` v0.7→v0.8, decision version `v0.8-policy` |
+| `test_step12_income_analysis.py` | 21 new tests: borrower extraction, role normalization, income linkage, biweekly/weekly conversion, program thresholds, front-end DTI enforcement |
 
 ### Punch List #12, #13, #14: Empty States, Profile Availability, Copy to Clipboard (2026-03-10)
 | Component | What was done |
@@ -266,11 +279,16 @@ All TDD (red → green → regression). 91 tests passing (81 main + 10 cleanup_o
 
 ## What's Next (Priority Order)
 
-1. **More form templates** — Add remaining 7 worksheets to `FORM_TEMPLATES` registry as extraction profiles improve.
-2. **`income_analysis` profile improvements** — Richer structured financial extraction (borrower names, employer, pay frequency).
-3. **Deterministic DTI engine hardening** — Edge cases, co-borrower logic, program-specific thresholds.
-4. **Underwriting decision simulation (v0.6)** — Rule-based PASS/FAIL/UNKNOWN; hardcoded thresholds; LLM used only for explanation layer.
-5. **Audit trail hardening** — Reproducible runs, exportable JSON artifacts, version tagging (version.json already in place for all profiles).
+1. **More form templates** — Add remaining 7 worksheets to `FORM_TEMPLATES` registry (extraction profiles now support borrower/employer fields).
+2. **Web UI nice-to-have items** — Punch list #16–#23 (run history, batch, search, export, queue depth, mobile, keyboard, light mode).
+3. **Server migration** — Punch list #24 (bootstrap on new GPU server).
+4. **Extraction accuracy tuning** — Punch list #25 (batch-process diverse loans, tune prompts post-GPU migration).
+
+**Completed (2026-03-10):**
+- ~~`income_analysis` improvements~~ — Borrowers, employer, biweekly/weekly frequencies (v2 schema)
+- ~~DTI engine hardening~~ — Biweekly/weekly conversion, `_PROGRAM_THRESHOLDS` (FHA/VA/USDA/Conventional)
+- ~~UW decision v0.8~~ — Front-end DTI enforcement, program-specific thresholds, multiple reasons
+- ~~Audit trail~~ — Already complete (version.json on all profiles, 8 tests)
 
 ---
 

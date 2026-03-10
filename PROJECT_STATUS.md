@@ -1,6 +1,6 @@
 # MortgageDocAI — Project Status
 
-**Last Updated:** 2026-03-08
+**Last Updated:** 2026-03-10
 
 ## Current phase & AI context
 
@@ -17,11 +17,12 @@
 6. Form fill feature for mortgage worksheets
 
 **Priority order:**
-1. Expand form fill templates (7 more worksheets) as extraction profiles improve.
-2. Improve `income_analysis` extraction (borrower names, employer, pay frequency).
-3. Harden deterministic DTI engine (edge cases, co-borrower, program-specific thresholds).
-4. Underwriting decision simulation v0.6 (rule-based PASS/FAIL).
-5. Audit trail hardening (reproducible runs, exportable JSON artifacts).
+1. Expand form fill templates (7 more worksheets) — extraction now supports borrower/employer fields.
+2. Web UI nice-to-have items (punch list #16–#23).
+3. Server migration prep (punch list #24).
+4. Extraction accuracy tuning post-GPU migration (punch list #25).
+
+**Completed (2026-03-10):** income_analysis v2 (borrowers, biweekly/weekly), DTI hardening (program thresholds), UW decision v0.8 (front-end DTI), audit trail (version.json all profiles).
 
 **Non-negotiables:** No cloud APIs. Do not rename folders/files. Preserve folder contracts (`nas_chunk/`, `nas_analyze/`, `outputs/`). Maintain `run_id` determinism. Preserve citation-integrity filtering. No change that breaks the regression smoke test.  
 
@@ -1469,3 +1470,35 @@ All medium-impact Web UI items completed. No backend changes.
 | `webui/app.js` | Click handler copies `<pre>` text or markdown `<div>` innerText via `navigator.clipboard.writeText()` |
 | `webui/app.js` | Shows "Copied!" for 2s on success, "Failed" on error |
 | `webui/styles.css` | `.btn-small` class: compact inline button styling |
+
+---
+
+## Income Analysis + DTI + UW Decision Hardening (2026-03-10)
+
+TDD: 21 new tests in `test_step12_income_analysis.py`. 112 total tests passing (102 main + 10 cleanup_orphans).
+
+### income_analysis v2 (borrowers + frequencies)
+
+| Component | What was done |
+|-----------|--------------|
+| `step12_analyze.py` | LLM prompt expanded: `borrowers` array (name, role, employer, employment_type) + `borrower_name`/`employer` on income items |
+| `step12_analyze.py` | `_normalize_income_analysis()`: extracts/normalizes borrowers, role normalization (coborrower/Co-Borrower → "co-borrower"), employment_type validation |
+| `step12_analyze.py` | Income items now carry `borrower_name` and `employer` fields (null if absent) |
+| `step12_analyze.py` | `biweekly` and `weekly` added to `_INCOME_FREQUENCIES_CANONICAL`; aliases normalized ("bi-weekly", "every two weeks", etc.) |
+| `step12_analyze.py` | Schema version: `income_analysis` v1 → v2 |
+
+### DTI engine hardening
+
+| Component | What was done |
+|-----------|--------------|
+| `step12_analyze.py` | `_compute_dti()`: biweekly → monthly (×26÷12), weekly → monthly (×52÷12) |
+| `step12_analyze.py` | `_PROGRAM_THRESHOLDS` constant: Conventional (28%/45%), FHA (31%/43%), VA (none/41%), USDA (29%/41%) |
+
+### UW decision v0.8
+
+| Component | What was done |
+|-----------|--------------|
+| `step12_analyze.py` | `_build_uw_decision()`: front-end DTI enforcement when `max_front_end_dti` is set in policy |
+| `step12_analyze.py` | Multiple reasons in output: `DTI_FRONT_END_MAX` + `DTI_BACK_END_MAX` with individual PASS/FAIL status |
+| `step12_analyze.py` | Overall status: FAIL if any rule fails, PASS if all pass, UNKNOWN if back-end is null |
+| `step12_analyze.py` | Decision version: `v0.7-policy` → `v0.8-policy`; schema version: `uw_decision` v0.7 → v0.8 |
