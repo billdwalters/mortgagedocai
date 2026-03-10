@@ -38,24 +38,29 @@ Already implemented: `fetchDocumentInventory()` + `renderInventoryCard()` in app
 ~~Errors currently trigger browser alert() popups (blocking, ugly). Replace with inline styled messages using the existing `.source-validation-msg` pattern.~~
 Replaced all 4 `alert()` calls with `showInlineMsg()`/`clearInlineMsg()` helpers. Auto-clears after 6s. Uses existing `.source-validation-msg` CSS classes.
 
-### 9. Show processing duration and per-step timing
-Job records have `started_at_utc` and `finished_at_utc` but UI doesn't display elapsed time. PHASE markers could also show per-step duration (Intake: 5s, Process: 45s, etc.).
+### ~~9. Show processing duration and per-step timing~~ DONE (2026-03-08)
+~~Job records have `started_at_utc` and `finished_at_utc` but UI doesn't display elapsed time. PHASE markers could also show per-step duration (Intake: 5s, Process: 45s, etc.).~~
+Stepper shows per-step duration from consecutive PHASE timestamps. Progress panel shows total elapsed time (live during processing, final on completion). Uses existing `formatDuration()` utility.
 
-### 10. Artifact file metadata
-API returns `size_bytes` and `mtime_utc` for each artifact file but UI ignores them. Show file size and "updated 2 minutes ago" timestamps.
+### ~~10. Artifact file metadata~~ DONE (2026-03-08)
+~~API returns `size_bytes` and `mtime_utc` for each artifact file but UI ignores them. Show file size and "updated 2 minutes ago" timestamps.~~
+Artifact file list now shows file size (via `formatBytes`) and timestamp (via `formatTimestamp`) as muted text next to each file link. Added `.artifact-meta` CSS spacing rule.
 
 ### ~~11. Disable buttons during loading + spinner feedback~~ DONE (2026-03-03)
 ~~Refresh Loans and Process Loan buttons don't disable while working. No spinner or loading message shown during async operations.~~
 View Artifacts: disables + shows "Loading..." during fetch, re-enables in finally. Chat Send: disables during processing, re-enables in finally and early-return paths. Added `.btn-secondary:disabled` and `.chat-send-row button:disabled` CSS rules.
 
-### 12. Better empty states
-If no loans found, the loan list is blank. Show "No loans found. Check your settings and connection." Same for empty artifact lists, empty chat, etc.
+### ~~12. Better empty states~~ DONE (2026-03-10)
+~~If no loans found, the loan list is blank. Show "No loans found. Check your settings and connection." Same for empty artifact lists, empty chat, etc.~~
+Artifacts panel shows "No artifacts found for this run." when empty. Chat area shows placeholder text until first message. Loan list and summary dashboard cards already had empty states.
 
-### 13. Show which profiles have outputs
-Don't offer a profile in the chat dropdown if it hasn't been run yet for this loan/run. Check artifact index to determine available profiles.
+### ~~13. Show which profiles have outputs~~ DONE (2026-03-10)
+~~Don't offer a profile in the chat dropdown if it hasn't been run yet for this loan/run. Check artifact index to determine available profiles.~~
+Fetches artifact index on loan select and job completion. Profiles without outputs shown as disabled with "(not run)" label. Previous selection preserved if still available.
 
-### 14. Copy to clipboard on JSON preview
-Add a copy button to artifact preview panels so users can grab JSON without selecting text.
+### ~~14. Copy to clipboard on JSON preview~~ DONE (2026-03-10)
+~~Add a copy button to artifact preview panels so users can grab JSON without selecting text.~~
+Copy button next to Preview heading works for JSON and markdown content. Shows "Copied!" for 2s on success. New `.btn-small` CSS class.
 
 ### ~~15. Human-readable timestamps~~ DONE (2026-03-03)
 ~~Show "Last processed: 3 days ago" or "Feb 26, 2026 at 6:07 AM" instead of raw run_id format like `2026-02-26T060725Z`.~~

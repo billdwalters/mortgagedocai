@@ -1437,3 +1437,35 @@ API already returned `size_bytes` and `mtime_utc` per artifact file — UI was i
 `punch_list.md` updated — document inventory was already implemented (commit `7de310b`, 2026-03-06) but not marked done.
 
 No backend changes. No new tests (UI-only changes).
+
+---
+
+## Punch List #12, #13, #14: Empty States, Profile Availability, Copy to Clipboard (2026-03-10)
+
+All medium-impact Web UI items completed. No backend changes.
+
+### Better empty states (#12)
+
+| Component | What was done |
+|-----------|--------------|
+| `webui/app.js` | Artifacts panel shows "No artifacts found for this run." when artifact list is empty |
+| `webui/index.html` | Chat area shows placeholder "Select a loan and ask a question to get started." — removed on first message append |
+| Already done | Loan list ("No source loans found."), summary cards ("Not available"), housekeeping ("No orphaned data found.") |
+
+### Profile availability (#13)
+
+| Component | What was done |
+|-----------|--------------|
+| `webui/app.js` | `ALL_CHAT_PROFILES` array + `updateChatProfiles(availableSet)`: rebuilds dropdown, disables profiles without outputs (labeled "not run") |
+| `webui/app.js` | `refreshChatProfileAvailability()`: fetches artifact index, builds available set from profiles with existing files |
+| `webui/app.js` | Called on loan select (`selectLoan`) and job completion (SUCCESS in poll handler) |
+| `webui/app.js` | Previous selection preserved if still enabled; falls back to first available |
+
+### Copy to clipboard (#14)
+
+| Component | What was done |
+|-----------|--------------|
+| `webui/index.html` | Added `#artifact-copy-btn` button (`.btn-small`) next to Preview heading |
+| `webui/app.js` | Click handler copies `<pre>` text or markdown `<div>` innerText via `navigator.clipboard.writeText()` |
+| `webui/app.js` | Shows "Copied!" for 2s on success, "Failed" on error |
+| `webui/styles.css` | `.btn-small` class: compact inline button styling |

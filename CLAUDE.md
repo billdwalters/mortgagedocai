@@ -164,9 +164,20 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 
 ---
 
-## Recently Completed Work (as of 2026-03-08)
+## Recently Completed Work (as of 2026-03-10)
 
 All TDD (red → green → regression). 91 tests passing (81 main + 10 cleanup_orphans).
+
+### Punch List #12, #13, #14: Empty States, Profile Availability, Copy to Clipboard (2026-03-10)
+| Component | What was done |
+|-----------|--------------|
+| `webui/app.js` | Artifacts panel: "No artifacts found for this run." when empty |
+| `webui/index.html` | Chat: placeholder text "Select a loan and ask a question to get started." removed on first message |
+| `webui/app.js` | `updateChatProfiles()` / `refreshChatProfileAvailability()`: fetches artifact index, disables profiles without outputs ("not run" label) |
+| `webui/app.js` | Profile dropdown refreshed on loan select + job completion; previous selection preserved |
+| `webui/app.js` | Copy button on artifact preview: copies JSON or markdown content to clipboard, "Copied!" feedback |
+| `webui/index.html` | Added `#artifact-copy-btn` button next to Preview heading |
+| `webui/styles.css` | Added `.btn-small` CSS class for compact inline buttons |
 
 ### Punch List #9 (per-step timing) + #10 (artifact metadata) (2026-03-08)
 | Component | What was done |
