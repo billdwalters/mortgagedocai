@@ -438,6 +438,7 @@
     if (detailsRun) detailsRun.textContent = selectedRunId ? "run_id: " + selectedRunId + " (" + formatTimestamp(selectedRunId) + ")" : "";
     updateProcessLoanButton();
     loadSummaryDashboard(loanId, selectedRunId);
+    refreshChatProfileAvailability();
   }
 
   // ——— Source path edit and browse ———
@@ -751,6 +752,7 @@
               if (el("overview-last-processed")) el("overview-last-processed").textContent = formatTimestamp(job.run_id);
               if (el("details-run-id")) el("details-run-id").textContent = "run_id: " + job.run_id + " (" + formatTimestamp(job.run_id) + ")";
               loadSummaryDashboard(selectedLoanId, job.run_id);
+              refreshChatProfileAvailability();
             }
           }
         })
@@ -1367,6 +1369,59 @@
       }
     } catch (e) {
       selectEl.innerHTML = "<option value=\"\">Ollama unavailable</option>";
+    }
+  }
+
+  // ——— Chat profile availability ———
+  var ALL_CHAT_PROFILES = [
+    { value: "default", label: "Default" },
+    { value: "income_analysis", label: "Income Analysis" },
+    { value: "uw_decision", label: "UW Decision" },
+    { value: "uw_conditions", label: "UW Conditions" },
+  ];
+
+  function updateChatProfiles(availableSet) {
+    var selectEl = el("chat-profile");
+    if (!selectEl) return;
+    var prev = selectEl.value;
+    selectEl.innerHTML = "";
+    ALL_CHAT_PROFILES.forEach(function (p) {
+      var opt = document.createElement("option");
+      opt.value = p.value;
+      opt.textContent = p.label;
+      if (availableSet && !availableSet.has(p.value)) {
+        opt.disabled = true;
+        opt.textContent = p.label + " (not run)";
+      }
+      selectEl.appendChild(opt);
+    });
+    // Restore previous selection if still enabled
+    var prevOpt = selectEl.querySelector("option[value=\"" + prev + "\"]");
+    if (prevOpt && !prevOpt.disabled) {
+      selectEl.value = prev;
+    } else {
+      // Select first enabled option
+      var first = selectEl.querySelector("option:not([disabled])");
+      if (first) selectEl.value = first.value;
+    }
+  }
+
+  async function refreshChatProfileAvailability() {
+    var selectEl = el("chat-profile");
+    if (!selectEl || !selectedLoanId || !selectedRunId) {
+      updateChatProfiles(null);
+      return;
+    }
+    try {
+      var data = await apiJson("/tenants/" + encodeURIComponent(getTenantId()) + "/loans/" + encodeURIComponent(selectedLoanId) + "/runs/" + encodeURIComponent(selectedRunId) + "/artifacts");
+      var available = new Set();
+      (data.profiles || []).forEach(function (prof) {
+        var hasFiles = (prof.files || []).some(function (f) { return f.exists; });
+        if (hasFiles) available.add(prof.name);
+      });
+      updateChatProfiles(available);
+    } catch (e) {
+      updateChatProfiles(null);
     }
   }
 
