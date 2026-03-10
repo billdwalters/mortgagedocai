@@ -615,7 +615,16 @@ def _postprocess_conditions(
     return merged
 
 
-_INCOME_FREQUENCIES_CANONICAL = {"monthly", "annual", "one-time", "unknown"}
+_INCOME_FREQUENCIES_CANONICAL = {"monthly", "annual", "biweekly", "weekly", "one-time", "unknown"}
+
+# Program-specific DTI thresholds (front-end / back-end).
+# None means the check is not enforced for that program.
+_PROGRAM_THRESHOLDS: Dict[str, Dict[str, Optional[float]]] = {
+    "Conventional": {"max_front_end_dti": 0.28, "max_back_end_dti": 0.45},
+    "FHA":          {"max_front_end_dti": 0.31, "max_back_end_dti": 0.43},
+    "VA":           {"max_front_end_dti": None,  "max_back_end_dti": 0.41},
+    "USDA":         {"max_front_end_dti": 0.29, "max_back_end_dti": 0.41},
+}
 
 # ---------------------------------------------------------------------------
 # Deterministic PITIA extraction from evidence text (regex-based, 3-tier)
@@ -1564,7 +1573,8 @@ You must answer ONLY using the EVIDENCE provided.
 If no income or liability items are found, return empty lists.
 
 Rules:
-- Extract each distinct income source as a separate item in income_items.
+- Extract each borrower (primary and co-borrower) in the borrowers array with name, role, employer, and employment type.
+- Extract each distinct income source as a separate item in income_items. Include borrower_name and employer if known.
 - Extract each distinct liability / recurring debt as a separate item in liability_items.
 - Include only recurring monthly debts in liability_items (e.g. mortgage, auto loan, credit card minimum). Do NOT include one-time amounts such as Cash to Close or closing costs.
 - For each item include the dollar amount and frequency (weekly, biweekly, monthly, annual).
@@ -1582,11 +1592,22 @@ Evidence:
 
 Return JSON in this schema:
 {{
+  "borrowers": [
+    {{
+      "name": "e.g. Jane Doe",
+      "role": "primary|co-borrower",
+      "employer": "e.g. Acme Corp or null",
+      "employment_type": "W2|self-employed|retired|other",
+      "citations": [{{"chunk_id":"string","quote":"short quote from chunk"}}]
+    }}
+  ],
   "income_items": [
     {{
       "description": "e.g. Base salary",
       "amount": number,
       "frequency": "weekly|biweekly|monthly|annual",
+      "borrower_name": "e.g. Jane Doe or null",
+      "employer": "e.g. Acme Corp or null",
       "citations": [{{"chunk_id":"string","quote":"short quote from chunk"}}]
     }}
   ],
@@ -1656,6 +1677,54 @@ def _normalize_income_analysis(llm_obj: Dict[str, Any], allowed_chunk_ids: set,
             cits.append({"chunk_id": cid, "quote": quote})
         return cits
 
+    # --- borrowers ---
+    borrowers_raw = llm_obj.get("borrowers", [])
+    if isinstance(borrowers_raw, str):
+        try:
+            parsed = json.loads(borrowers_raw)
+            if isinstance(parsed, list):
+                borrowers_raw = parsed
+            else:
+                borrowers_raw = []
+        except Exception:
+            borrowers_raw = []
+    if not isinstance(borrowers_raw, list):
+        borrowers_raw = []
+
+    filtered_borrowers: List[Dict[str, Any]] = []
+    for bor in borrowers_raw:
+        if not isinstance(bor, dict):
+            continue
+        name = str(bor.get("name", "") or "").strip()
+        if not name:
+            continue
+        role = str(bor.get("role", "") or "").strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+        if role in ("coborrower", "co borrower"):
+            role = "co-borrower"
+        elif role == "primary":
+            role = "primary"
+        else:
+            role = role if role in ("primary", "co-borrower") else "primary"
+        employer = bor.get("employer")
+        if employer is not None:
+            employer = str(employer).strip() or None
+        emp_type = str(bor.get("employment_type", "") or "").strip()
+        if emp_type.lower() not in ("w2", "self-employed", "retired", "other"):
+            emp_type = "other"
+        else:
+            emp_type = emp_type.lower()
+        # W2 should be uppercase
+        if emp_type == "w2":
+            emp_type = "W2"
+        cits = _filter_citations(bor.get("citations", []) or [], name)
+        filtered_borrowers.append({
+            "name": name,
+            "role": role,
+            "employer": employer,
+            "employment_type": emp_type,
+            "citations": cits,
+        })
+
     # --- income_items ---
     income_raw = llm_obj.get("income_items", [])
     if isinstance(income_raw, str):
@@ -1686,9 +1755,13 @@ def _normalize_income_analysis(llm_obj: Dict[str, Any], allowed_chunk_ids: set,
             amount = 0.0
 
         # Normalize frequency — preserve model-provided value, canonical set only
-        freq = str(item.get("frequency", "") or "").strip().lower().replace("-", "-")
+        freq = str(item.get("frequency", "") or "").strip().lower()
         if freq in ("one_time", "onetime", "once", "lump sum", "lump_sum"):
             freq = "one-time"
+        elif freq in ("bi-weekly", "bi_weekly", "biweekly", "every two weeks", "every 2 weeks"):
+            freq = "biweekly"
+        elif freq in ("weekly", "every week"):
+            freq = "weekly"
         if freq not in _INCOME_FREQUENCIES_CANONICAL:
             freq = "unknown"
 
@@ -1704,10 +1777,20 @@ def _normalize_income_analysis(llm_obj: Dict[str, Any], allowed_chunk_ids: set,
             continue
         seen_income_keys.add(dedup_key)
 
+        # Optional borrower_name and employer (new fields, null if absent)
+        borrower_name = item.get("borrower_name")
+        if borrower_name is not None:
+            borrower_name = str(borrower_name).strip() or None
+        item_employer = item.get("employer")
+        if item_employer is not None:
+            item_employer = str(item_employer).strip() or None
+
         filtered_income.append({
             "description": desc,
             "amount": amount,
             "frequency": freq,
+            "borrower_name": borrower_name,
+            "employer": item_employer,
             "citations": cits,
         })
 
@@ -1815,6 +1898,7 @@ def _normalize_income_analysis(llm_obj: Dict[str, Any], allowed_chunk_ids: set,
         confidence = min(confidence, 0.5)
 
     return {
+        "borrowers": filtered_borrowers,
         "income_items": filtered_income,
         "liability_items": filtered_liab,
         "proposed_pitia": proposed_pitia,
@@ -1861,6 +1945,10 @@ def _compute_dti(normalized: Dict[str, Any]) -> Dict[str, Any]:
                 monthly = amount
             elif freq == "annual":
                 monthly = round(amount / 12, 2)
+            elif freq == "biweekly":
+                monthly = round(amount * 26 / 12, 2)
+            elif freq == "weekly":
+                monthly = round(amount * 52 / 12, 2)
             else:
                 notes.append(f"income '{item['description']}' freq={freq} excluded from monthly total")
 
@@ -2097,9 +2185,9 @@ def _build_version_info(policy: Dict[str, Any]) -> Dict[str, Any]:
 
 # Schema version — bump when the output JSON shape for that profile changes.
 _SCHEMA_VERSIONS: Dict[str, str] = {
-    "uw_decision":    "v0.7",
+    "uw_decision":    "v0.8",
     "uw_conditions":  "v1",
-    "income_analysis": "v1",
+    "income_analysis": "v2",
     "default":        "v1",
 }
 
@@ -2173,13 +2261,18 @@ def _build_uw_decision(
 ) -> Dict[str, Any]:
     """Build deterministic underwriting decision from income_analysis outputs.
 
-    Rules (v0.7 policy-driven):
+    Rules (v0.8 policy-driven):
       back_end_dti is None                                -> UNKNOWN
-      back_end_dti <= policy.thresholds.max_back_end_dti  -> PASS
-      back_end_dti >  policy.thresholds.max_back_end_dti  -> FAIL
+      back_end_dti <= policy.thresholds.max_back_end_dti  -> back-end PASS
+      back_end_dti >  policy.thresholds.max_back_end_dti  -> back-end FAIL
+      front_end_dti enforcement (if max_front_end_dti is not None):
+        front_end_dti <= max_front_end_dti                -> front-end PASS
+        front_end_dti >  max_front_end_dti                -> front-end FAIL
+      Overall: FAIL if any rule fails; PASS if all pass; UNKNOWN if back-end unknown.
     Same rules applied independently for combined scenario.
     """
     threshold = policy["thresholds"]["max_back_end_dti"]
+    front_threshold = policy["thresholds"].get("max_front_end_dti")
     back_end_dti = dti.get("back_end_dti")
     front_end_dti = dti.get("front_end_dti")
     back_end_dti_combined = dti.get("back_end_dti_combined")
@@ -2215,10 +2308,30 @@ def _build_uw_decision(
             "threshold": threshold,
         })
 
+    # Front-end DTI check (only if threshold is set)
+    if front_threshold is not None and front_end_dti is not None:
+        if front_end_dti <= front_threshold:
+            primary_reasons.append({
+                "rule": "DTI_FRONT_END_MAX",
+                "status": "PASS",
+                "value": front_end_dti,
+                "threshold": front_threshold,
+            })
+        else:
+            primary_reasons.append({
+                "rule": "DTI_FRONT_END_MAX",
+                "status": "FAIL",
+                "value": front_end_dti,
+                "threshold": front_threshold,
+            })
+            if primary_status != "UNKNOWN":
+                primary_status = "FAIL"
+
     # --- Combined decision ---
     decision_combined = None
     if back_end_dti_combined is not None:
         combined_reasons: List[Dict[str, Any]] = []
+        combined_status: str
         if back_end_dti_combined <= threshold:
             combined_status = "PASS"
         else:
@@ -2229,6 +2342,23 @@ def _build_uw_decision(
             "value": back_end_dti_combined,
             "threshold": threshold,
         })
+        # Front-end check for combined
+        if front_threshold is not None and front_end_dti_combined is not None:
+            if front_end_dti_combined <= front_threshold:
+                combined_reasons.append({
+                    "rule": "DTI_FRONT_END_MAX",
+                    "status": "PASS",
+                    "value": front_end_dti_combined,
+                    "threshold": front_threshold,
+                })
+            else:
+                combined_reasons.append({
+                    "rule": "DTI_FRONT_END_MAX",
+                    "status": "FAIL",
+                    "value": front_end_dti_combined,
+                    "threshold": front_threshold,
+                })
+                combined_status = "FAIL"
         decision_combined = {
             "status": combined_status,
             "reasons": combined_reasons,
@@ -2299,7 +2429,7 @@ def _build_uw_decision(
         "run_id": run_id,
         "ruleset": {
             "program": policy["program"],
-            "version": "v0.7-policy",
+            "version": "v0.8-policy",
             "thresholds": {
                 "max_back_end_dti": threshold,
                 "max_front_end_dti": policy["thresholds"].get("max_front_end_dti"),

@@ -20,7 +20,7 @@ from unittest.mock import patch, MagicMock
 # Helpers
 # ---------------------------------------------------------------------------
 
-_SCHEMAS = {"uw_decision": "v0.7", "uw_conditions": "v1", "income_analysis": "v1", "default": "v1"}
+_SCHEMAS = {"uw_decision": "v0.8", "uw_conditions": "v1", "income_analysis": "v2", "default": "v1"}
 
 
 def _make_args(**kwargs):
