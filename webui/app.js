@@ -801,7 +801,26 @@
     const previewWrap = el("artifact-preview-wrap");
     const previewContent = el("artifact-preview-content");
     const previewMarkdown = el("artifact-preview-markdown");
+    const copyBtn = el("artifact-copy-btn");
     if (!btn || !panel || !indexEl) return;
+    if (copyBtn) {
+      copyBtn.addEventListener("click", function () {
+        var text = "";
+        if (previewMarkdown && !previewMarkdown.hidden) {
+          text = previewMarkdown.innerText || previewMarkdown.textContent || "";
+        } else if (previewContent) {
+          text = previewContent.textContent || "";
+        }
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(function () {
+          copyBtn.textContent = "Copied!";
+          setTimeout(function () { copyBtn.textContent = "Copy"; }, 2000);
+        }).catch(function () {
+          copyBtn.textContent = "Failed";
+          setTimeout(function () { copyBtn.textContent = "Copy"; }, 2000);
+        });
+      });
+    }
     btn.addEventListener("click", async function () {
       clearInlineMsg();
       const runId = selectedRunId || (selectedLoanId && lastProcessedCache[selectedLoanId] && lastProcessedCache[selectedLoanId].run_id);

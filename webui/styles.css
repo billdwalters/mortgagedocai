@@ -424,6 +424,18 @@ body {
 }
 .artifacts-index .file-link:hover { text-decoration: underline; }
 .artifacts-index .artifact-meta { margin-right: 0.75rem; }
+.btn-small {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  margin-left: 0.5rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.btn-small:hover { background: var(--border); }
 .artifact-preview-wrap pre {
   max-height: 320px;
 }
