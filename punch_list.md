@@ -98,20 +98,9 @@ UI is dark-only. Some users may prefer a light theme.
 
 ## Infrastructure / Backend
 
-### 1. Orphaned data cleanup for closed loans
-
-**Problem:** When a loan folder is moved out of the source root (e.g. to a "closed loans" folder), it disappears from the UI on Refresh Loans, but the processed data remains:
-- **Qdrant** — embedded vectors for closed loans persist in the collection
-- **TrueNAS** — chunk files (`nas_chunk`), retrieval packs, and analysis outputs (`nas_analyze`) remain on disk
-- **NAS Ingest** — staged intake files (`nas_ingest`) remain on disk
-
-**Desired:** A cleanup mechanism that identifies orphaned loan data (loans no longer present in the active source folder) and purges the associated Qdrant vectors and NAS artifacts.
-
-**Considerations:**
-- Must be safe — no accidental deletion of loans that are temporarily moved or being reorganized
-- Could be a dry-run-first CLI script that lists orphans before deleting
-- Qdrant deletion would filter by `loan_id` in payload
-- NAS deletion would remove `tenants/<tenant>/loans/<loan_id>/` trees
+### ~~1. Orphaned data cleanup for closed loans~~ DONE (2026-03-06)
+~~Cleanup mechanism for orphaned loan data (source folder removed, NAS/Qdrant data remains).~~
+Implemented: `cleanup_orphans.py` CLI (dry-run by default, `--confirm --yes` to delete), Housekeeping UI in web UI (`GET /housekeeping/orphans` scan + `POST /housekeeping/orphans/purge`), skips active jobs, caps 20/request, 10 tests. Code audit hardened: `find_active_jobs` scans per-loan job dirs, `shutil.rmtree` error handling for NAS.
 
 ### 24. Server migration prep
 Document the full migration procedure for moving to the new GPU server. Verify `bootstrap_mortgagedocai.sh --install` covers everything, test on clean machine if possible.

@@ -1,6 +1,6 @@
 # MortgageDocAI — Project Status
 
-**Last Updated:** 2026-03-10
+**Last Updated:** 2026-03-13
 
 ## Current phase & AI context
 
@@ -22,7 +22,7 @@
 3. Server migration prep (punch list #24).
 4. Extraction accuracy tuning post-GPU migration (punch list #25).
 
-**Completed (2026-03-10):** income_analysis v2 (borrowers, biweekly/weekly), DTI hardening (program thresholds), UW decision v0.8 (front-end DTI), audit trail (version.json all profiles).
+**Completed (2026-03-13):** System-wide code audit (2 rounds, 40 fixes across 19 files). income_analysis v2, DTI hardening, UW decision v0.8, audit trail.
 
 **Non-negotiables:** No cloud APIs. Do not rename folders/files. Preserve folder contracts (`nas_chunk/`, `nas_analyze/`, `outputs/`). Maintain `run_id` determinism. Preserve citation-integrity filtering. No change that breaks the regression smoke test.  
 
@@ -119,7 +119,7 @@ Pipeline steps:
 - Re-runs for same `run_id` overwrite cleanly
 - **Loan API (FastAPI):** health, list tenants/loans/runs, **source-of-truth source_loans** (list + by loan_id), sync query, pipeline jobs, query jobs, artifacts index and artifact downloads, **form fill endpoints** (list templates + generate pre-filled .xlsx); optional API key and tenant allowlist (see Loan API section below)
 - **Web UI (/ui):** Refresh Loans from source-of-truth mount; loan list with Needs Processing / Up to date badges; Process Loan uses selected loan’s source_path; progress stepper shows live phase colors (streamed job stdout); **form fill dropdown** (select template + generate + download)
-- **Form Fill:** 3 Excel templates (Income Calc W2, FHA Max Mortgage, VA IRRRL Recoupment) pre-filled from pipeline data; 81 tests passing
+- **Form Fill:** 3 Excel templates (Income Calc W2, FHA Max Mortgage, VA IRRRL Recoupment) pre-filled from pipeline data; 117 tests passing
 
 ---
 
@@ -1438,6 +1438,66 @@ API already returned `size_bytes` and `mtime_utc` per artifact file — UI was i
 `punch_list.md` updated — document inventory was already implemented (commit `7de310b`, 2026-03-06) but not marked done.
 
 No backend changes. No new tests (UI-only changes).
+
+---
+
+## System-Wide Code Audit — Round 1 + Round 2 (2026-03-13)
+
+Two-pass comprehensive audit of all pipeline scripts, job service, API, web UI, and tests. 40 issues fixed across 19 files. 117 tests passing (up from 112; 5 new test fixes for runner signatures, cleanup_orphans path, etc.).
+
+### Round 1 (Critical + High + Medium + Low)
+
+| # | Severity | File(s) | Fix |
+|---|----------|---------|-----|
+| C1 | Critical | `webui/app.js` | `apiFetch→apiJson` at 3 locations (form fill, housekeeping) |
+| C2 | Critical | `step11_process.py` | Narrow `_ensure_collection` catch to `UnexpectedResponse` only |
+| C3 | Critical | `step12_analyze.py` | Rename-aside pattern for crash-safe final dir publish |
+| C4 | Critical | `step11_process.py` | Rename-aside pattern for crash-safe final dir publish |
+| C5 | Critical | `job_worker.py` | Emit PHASE:FAIL + release claim on timeout/exception |
+| H1 | High | `loan_api.py` | Path traversal protection middleware (`..` → 400) |
+| H2 | High | `adapters_disk.py` | LoanLockImpl.acquire retries after stale lock clear |
+| H3 | High | `adapters_disk.py`, `ports.py`, `service.py` | LoanLockImpl.release verifies job_id ownership |
+| H4 | High | `job_worker.py` | Pass job_id to loan_lock.release (3 call sites) |
+| H5 | High | `step11_process.py` | Deferred Qdrant upserts (chunks on disk before vectors) |
+| H6 | High | `cleanup_orphans.py` | `find_active_jobs` scans per-loan job dirs (was wrong path) |
+| H7 | High | `formfill.py` | `keep_vba=True` for .xlsm templates |
+| M1 | Medium | `lib.py` | `atomic_write_text` uses `tempfile.mkstemp` (collision-free) |
+| M2 | Medium | `step10_intake.py` | `shutil.copy2` preserves metadata |
+| M3 | Medium | `step10_intake.py` | Hash source file instead of dest |
+| M4 | Medium | `step12_analyze.py` | Confidence defaults: truncation→0.3, clean→0.5 |
+| M5 | Medium | `step12_analyze.py` | Remove dead `_build_version_info` (stale v0.7 schema) |
+| M6 | Medium | `step13_build_retrieval_pack.py` | Cap keyword injections at 50 |
+| M7 | Medium | `run_loan_job.py` | Pass `--no-auto-retrieve` to income_analysis Step12 |
+| M8 | Medium | `adapters_disk.py` | Restart recovery skips jobs with active claim files |
+| M9 | Medium | `loan_api.py` | Legacy `start_run` endpoint marked `deprecated=True` |
+| M10 | Medium | `formfill.py` | Graceful skip on invalid sheet name |
+| L1 | Low | `lib.py` | `datetime.utcnow()` → `datetime.now(timezone.utc)` |
+| L3 | Low | `adapters_subprocess.py` | Deferred `_TEMP_DIR.mkdir()` to first use |
+| L4 | Low | `webui/app.js` | `escapeHtml()` for loan_id in housekeeping table |
+| L5 | Low | `webui/index.html` | CSP meta tag |
+| L6 | Low | `webui/app.js` | `encodeURIComponent()` for form fill URL |
+| L7 | Low | `loan_api.py` | `_source_loan_last_modified_utc` returns None on error |
+
+### Round 2
+
+| # | Severity | File(s) | Fix |
+|---|----------|---------|-----|
+| H1 | High | `step11_process.py` | Infinite loop guard: `i = max(i+1, end-overlap)` |
+| M1 | Medium | `step12_analyze.py` | Raw LLM output uses `atomic_write_text` |
+| M2 | Medium | `step12_analyze.py` | `_run_step13` uses `sys.executable` not `python3` |
+| M3 | Medium | `loan_api.py` | Sync `query_run` gets subprocess timeouts + 504 handling |
+| M4 | Medium | `loan_api.py` | `source_path` validated against `SOURCE_LOANS_ROOT` |
+| M5 | Medium | `loan_api.py` | Null byte / control char rejection in URL paths |
+| M6 | Medium | `cleanup_orphans.py` | `shutil.rmtree` wrapped in try/except for NAS errors |
+| M7 | Medium | `webui/app.js` | `encodeURIComponent` on housekeeping tenant calls |
+| M8 | Medium | `webui/app.js` | Form fill error handler handles non-JSON responses |
+| L4 | Low | `job_worker.py` | Use `STDOUT_TRUNCATE` constant (was hardcoded 64000) |
+| L5 | Low | `formfill.py` | `wb.close()` after save |
+| L6 | Low | `webui/app.js` | Strip `javascript:` URLs in markdown sanitizer |
+| L7 | Low | `webui/app.js` | `showHkMsg` uses correct CSS class names |
+| L8 | Low | `webui/styles.css` | Add `--border` CSS variable to `:root` |
+| L9 | Low | `test_formfill.py` | Fix tautological assertion |
+| L10 | Low | `test_job_hardening.py` | Temp dir cleanup via atexit |
 
 ---
 

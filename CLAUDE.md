@@ -150,7 +150,7 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 **Form Fill:**
 - `formfill.py` — Form registry (`FORM_TEMPLATES`), `FieldMapping`/`FormTemplate` dataclasses, `fill_form()` filler logic (openpyxl)
 
-**Tests (112 passing as of 2026-03-10: 102 main + 10 cleanup_orphans):**
+**Tests (117 passing as of 2026-03-13: 107 main + 10 cleanup_orphans):**
 - `test_formfill.py` — Form registry, JSON path resolution, filler logic (19 tests)
 - `test_job_hardening.py` — Job workflow resilience (10 tests)
 - `test_source_path_validation.py` — Source path validation (5 tests)
@@ -165,9 +165,17 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 
 ---
 
-## Recently Completed Work (as of 2026-03-10)
+## Recently Completed Work (as of 2026-03-13)
 
-All TDD (red → green → regression). 112 tests passing (102 main + 10 cleanup_orphans).
+All TDD (red → green → regression). 117 tests passing (107 main + 10 cleanup_orphans).
+
+### System-Wide Code Audit — Round 1 + Round 2 (2026-03-13)
+| Severity | Count | Key Fixes |
+|----------|-------|-----------|
+| Critical (5) | `apiFetch→apiJson` in webui, narrow exception catch in step11 `_ensure_collection`, crash-safe rename-aside in step11+step12, PHASE:FAIL + release claim on worker timeout |
+| High (9) | Path traversal middleware, LoanLock ownership verification, deferred Qdrant upserts, `find_active_jobs` per-loan scan, `keep_vba=True` for .xlsm, infinite loop guard in chunker, source_path validation |
+| Medium (15) | Atomic writes (`tempfile.mkstemp`), `shutil.copy2` in step10, hash source not dest, subprocess timeouts on sync query endpoint, `sys.executable` instead of `python3`, null byte rejection in URLs, NAS rmtree error handling, `encodeURIComponent` on housekeeping calls, form fill error handling |
+| Low (11) | `datetime.now(timezone.utc)`, CSP meta tag, `escapeHtml` for loan_ids, `javascript:` URL stripping, CSS fixes (`--border` var, `showHkMsg` class names), `wb.close()`, `STDOUT_TRUNCATE` constant, test hygiene (tautological assert, temp dir cleanup) |
 
 ### Income Analysis + DTI + UW Decision Hardening (2026-03-10)
 | Component | What was done |
@@ -303,14 +311,16 @@ cd m:\mortgagedocai
 python -m py_compile scripts/step12_analyze.py
 python -m py_compile scripts/step13_build_retrieval_pack.py
 
-# Run full test suite (81 tests)
+# Run full test suite (117 tests)
 python -m pytest scripts/test_formfill.py \
                  scripts/test_step13_chunk_index.py \
                  scripts/test_step12_version_blob.py \
                  scripts/test_step12_uw_conditions.py \
                  scripts/test_step12_postprocess_conditions.py \
                  scripts/test_job_hardening.py \
-                 scripts/test_source_path_validation.py -q
+                 scripts/test_source_path_validation.py \
+                 scripts/test_step12_income_analysis.py \
+                 scripts/test_cleanup_orphans.py -q
 
 # Step13 self-test (Linux AI server, requires qdrant_client)
 python scripts/step13_build_retrieval_pack.py --self-test
