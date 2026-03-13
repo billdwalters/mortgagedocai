@@ -145,7 +145,7 @@ class JobService:
                 self._store.save(dict(self._jobs[job_id]))
         except Exception:
             if lock_held:
-                self._loan_lock.release(tenant_id, loan_id)
+                self._loan_lock.release(tenant_id, loan_id, job_id)
             raise
         timeout = request.get("timeout", JOB_TIMEOUT_DEFAULT)
         env = get_job_env(request)
@@ -197,7 +197,7 @@ class JobService:
             return
         finally:
             if lock_held:
-                self._loan_lock.release(tenant_id, loan_id)
+                self._loan_lock.release(tenant_id, loan_id, job_id)
         self._finalize_job(job_id, returncode, stdout, stderr)
 
     def _finalize_job(

@@ -279,7 +279,8 @@ class DiskJobStore:
                 if not idx_path.exists():
                     self.save_index_entry(job_id, _tid, _lid)
 
-        # Restart recovery: for each RUNNING, set SUCCESS from manifest or FAIL, clear lock, persist
+        # Restart recovery: for each RUNNING, set SUCCESS from manifest or FAIL, clear lock, persist.
+        # Skip recovery if a claim file exists — a worker may still be processing the job.
         lock = LoanLockImpl(self._get_base)
         for job in list(jobs.values()):
             if job.get("status") != "RUNNING":
@@ -289,6 +290,10 @@ class DiskJobStore:
             loan_id = job.get("loan_id")
             run_id = job.get("run_id")
             if not tenant_id or not loan_id:
+                continue
+            # If a claim exists for this job, a worker is likely still running — don't clobber.
+            claim_path = self._claim_file_path(tenant_id, loan_id, job_id)
+            if claim_path.exists():
                 continue
             result_summary = result_from_manifest(self._get_base, tenant_id, loan_id, run_id) if run_id else None
             lock.clear_if_stale(tenant_id, loan_id)
@@ -448,6 +453,7 @@ class LoanLockImpl:
         lock_path = self._lock_path(tenant_id, loan_id)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         deadline = time.time() + max_wait_sec
+        force_cleared = False
         while True:
             try:
                 fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -459,24 +465,36 @@ class LoanLockImpl:
                 return
             except FileExistsError:
                 if time.time() >= deadline:
-                    # Force-clear the stale lock and retry once
+                    if force_cleared:
+                        # Already force-cleared once and still can't acquire — give up.
+                        raise RuntimeError(
+                            f"Loan lock contended after force-clear for {tenant_id}/{loan_id}"
+                        )
+                    # Force-clear the stale lock, then loop to retry acquisition atomically.
                     try:
                         lock_path.unlink()
                     except OSError:
                         pass
-                    raise RuntimeError(
-                        f"Loan lock held too long (>{max_wait_sec}s); "
-                        f"cleared stale lock for {tenant_id}/{loan_id}"
-                    )
+                    force_cleared = True
+                    continue
                 time.sleep(LOCK_RETRY_SEC)
             except OSError as e:
                 raise RuntimeError(f"Could not acquire loan lock: {e}") from e
 
-    def release(self, tenant_id: str, loan_id: str) -> None:
+    def release(self, tenant_id: str, loan_id: str, job_id: str | None = None) -> None:
+        """Release per-loan lock. If job_id is provided, only release if the lock is held by that job."""
         lock_path = self._lock_path(tenant_id, loan_id)
         try:
-            if lock_path.exists():
-                lock_path.unlink()
+            if not lock_path.exists():
+                return
+            if job_id is not None:
+                try:
+                    lock_data = json.loads(lock_path.read_text(encoding="utf-8"))
+                    if lock_data.get("job_id") != job_id:
+                        return  # Lock held by a different job — don't release it.
+                except (json.JSONDecodeError, OSError):
+                    pass  # Can't read lock — fall through to unlink (stale/corrupt).
+            lock_path.unlink()
         except OSError:
             pass
 

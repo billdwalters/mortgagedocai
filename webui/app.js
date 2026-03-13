@@ -1717,7 +1717,7 @@
     ]);
 
     function loadTemplates() {
-      apiFetch("/formfill/templates").then(function (data) {
+      apiJson("/formfill/templates").then(function (data) {
         if (!data || !data.templates || !data.templates.length) return;
         populateSelect(data.templates);
       }).catch(function () { /* keep static fallback */ });
@@ -1735,8 +1735,8 @@
         return;
       }
       var tenantId = getTenantId();
-      var url = getBaseUrl() + "/tenants/" + tenantId + "/loans/" + selectedLoanId
-              + "/runs/" + selectedRunId + "/formfill/" + templateId;
+      var url = getBaseUrl() + "/tenants/" + encodeURIComponent(tenantId) + "/loans/" + encodeURIComponent(selectedLoanId)
+              + "/runs/" + encodeURIComponent(selectedRunId) + "/formfill/" + encodeURIComponent(templateId);
 
       generateBtn.disabled = true;
       selectEl.disabled = true;
@@ -1828,8 +1828,8 @@
         var disabled = o.has_active_job ? " disabled" : "";
         var tag = o.has_active_job ? '<span style="color:#fbbf24">Active job</span>' : '<span style="color:#94a3b8">Deletable</span>';
         html += '<tr>' +
-          '<td><input type="checkbox" class="hk-check" data-loan-id="' + o.loan_id + '"' + disabled + '></td>' +
-          '<td><strong>' + o.loan_id + '</strong></td>' +
+          '<td><input type="checkbox" class="hk-check" data-loan-id="' + escapeHtml(o.loan_id) + '"' + disabled + '></td>' +
+          '<td><strong>' + escapeHtml(o.loan_id) + '</strong></td>' +
           '<td>' + (o.locations.nas_ingest ? formatSize(o.sizes.nas_ingest) : "—") + '</td>' +
           '<td>' + (o.locations.nas_chunk ? formatSize(o.sizes.nas_chunk) : "—") + '</td>' +
           '<td>' + (o.locations.nas_analyze ? formatSize(o.sizes.nas_analyze) : "—") + '</td>' +
@@ -1857,7 +1857,7 @@
       msgEl.hidden = true;
       hkBtn.disabled = true;
 
-      apiFetch("/tenants/" + tenantId + "/housekeeping/orphans")
+      apiJson("/tenants/" + tenantId + "/housekeeping/orphans")
         .then(function (data) {
           renderOrphans(data);
         })
@@ -1899,7 +1899,7 @@
         purgeBtn.disabled = true;
         msgEl.hidden = true;
 
-        apiFetch("/tenants/" + tenantId + "/housekeeping/orphans/purge", {
+        apiJson("/tenants/" + tenantId + "/housekeeping/orphans/purge", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ loan_ids: ids, skip_qdrant: false }),

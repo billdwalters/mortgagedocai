@@ -54,10 +54,10 @@ class ContractError(RuntimeError):
 # Time helpers
 # -----------------------------
 def utc_run_id() -> str:
-    return _dt.datetime.utcnow().strftime("%Y-%m-%dT%H%M%SZ")
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
 
 def utc_timestamp_compact() -> str:
-    return _dt.datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d_%H%M%S")
 
 # -----------------------------
 # Hashing helpers
@@ -104,16 +104,22 @@ def safe_mkdir(path: Path) -> None:
     ensure_dir(path)
 
 def atomic_write_text(path: Path, text: str) -> None:
+    import tempfile
     ensure_dir(path.parent)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(str(tmp), str(path))
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 def atomic_write_json(path: Path, obj: Any) -> None:
-    ensure_dir(path.parent)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(str(tmp), str(path))
+    atomic_write_text(path, json.dumps(obj, indent=2, sort_keys=True))
 
 def atomic_rename_dir(staging_dir: Path, final_dir: Path) -> None:
     ensure_dir(final_dir.parent)

@@ -135,25 +135,36 @@ def find_active_jobs(
     tenant_id: str,
     nas_analyze: Path = NAS_ANALYZE,
 ) -> set[str]:
-    """Return loan_ids that have PENDING or RUNNING jobs."""
+    """Return loan_ids that have PENDING or RUNNING jobs.
+
+    Production job store layout (DiskJobStore):
+        nas_analyze/tenants/{tenant}/loans/{loan}/_meta/jobs/{job_id}.json
+    """
     active: set[str] = set()
-    # Jobs stored at: nas_analyze/_meta/jobs/*.json (global) or per-loan
-    # Check global job store
-    jobs_dir = nas_analyze / "_meta" / "jobs"
-    if not jobs_dir.is_dir():
+    loans_dir = nas_analyze / "tenants" / tenant_id / "loans"
+    if not loans_dir.is_dir():
         return active
     try:
-        for f in jobs_dir.iterdir():
-            if not f.name.endswith(".json"):
+        for loan_dir in loans_dir.iterdir():
+            if not loan_dir.is_dir():
+                continue
+            jobs_dir = loan_dir / "_meta" / "jobs"
+            if not jobs_dir.is_dir():
                 continue
             try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-                status = data.get("status", "")
-                loan_id = data.get("loan_id", "")
-                t_id = data.get("tenant_id", "")
-                if t_id == tenant_id and status in ("PENDING", "RUNNING") and loan_id:
-                    active.add(loan_id)
-            except (json.JSONDecodeError, OSError):
+                for f in jobs_dir.iterdir():
+                    if not f.name.endswith(".json") or f.name.endswith(".claim"):
+                        continue
+                    try:
+                        data = json.loads(f.read_text(encoding="utf-8"))
+                        status = data.get("status", "")
+                        loan_id = data.get("loan_id", "")
+                        t_id = data.get("tenant_id", "")
+                        if t_id == tenant_id and status in ("PENDING", "RUNNING") and loan_id:
+                            active.add(loan_id)
+                    except (json.JSONDecodeError, OSError):
+                        continue
+            except OSError:
                 continue
     except OSError:
         pass

@@ -88,7 +88,7 @@ def run_one_cycle(
             job["started_at_utc"] = _utc_now_z()
             store.save(job)
         except Exception:
-            loan_lock.release(tid, lid)
+            loan_lock.release(tid, lid, jid)
             store.release_claim(tid, lid, jid)
             raise
         timeout = request.get("timeout", JOB_TIMEOUT_DEFAULT)
@@ -113,20 +113,26 @@ def run_one_cycle(
                 on_stdout_line=_on_line, job_id=jid,
             )
         except subprocess.TimeoutExpired:
+            phase_line = f"PHASE:FAIL {_utc_now_z()}\n"
+            job["stdout"] = (job.get("stdout") or "") + phase_line
             job["status"] = "FAIL"
             job["finished_at_utc"] = _utc_now_z()
             job["error"] = _truncate(f"Job timed out after {timeout}s", ERROR_TRUNCATE)
             store.save(job)
+            store.release_claim(tid, lid, jid)
             return True
         except Exception as e:
+            phase_line = f"PHASE:FAIL {_utc_now_z()}\n"
+            job["stdout"] = (job.get("stdout") or "") + phase_line
             job["status"] = "FAIL"
             job["finished_at_utc"] = _utc_now_z()
             job["error"] = _truncate(str(e), ERROR_TRUNCATE)
             store.save(job)
+            store.release_claim(tid, lid, jid)
             return True
         finally:
             if lock_held:
-                loan_lock.release(tid, lid)
+                loan_lock.release(tid, lid, jid)
         resolved_run_id = request.get("run_id") or parse_run_id_from_stdout(stdout)
         result_summary: dict[str, Any] = {}
         if resolved_run_id:

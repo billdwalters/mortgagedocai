@@ -22,7 +22,11 @@ SCRIPTS_DIR = _SCRIPT_DIR
 # the systemd path entirely; the Popen fallback handles streaming + timeout.
 _SYSTEMD_RUN: str | None = None
 _TEMP_DIR = REPO_ROOT / ".job_tmp"
-_TEMP_DIR.mkdir(exist_ok=True)
+
+
+def _ensure_temp_dir() -> Path:
+    _TEMP_DIR.mkdir(exist_ok=True)
+    return _TEMP_DIR
 
 
 def _job_unit_name(job_id: str) -> str:
@@ -30,15 +34,15 @@ def _job_unit_name(job_id: str) -> str:
 
 
 def _job_temp_stdout(job_id: str) -> Path:
-    return _TEMP_DIR / f"mortgagedocai-{job_id}.stdout"
+    return _ensure_temp_dir() / f"mortgagedocai-{job_id}.stdout"
 
 
 def _job_temp_stderr(job_id: str) -> Path:
-    return _TEMP_DIR / f"mortgagedocai-{job_id}.stderr"
+    return _ensure_temp_dir() / f"mortgagedocai-{job_id}.stderr"
 
 
 def _job_temp_rc(job_id: str) -> Path:
-    return _TEMP_DIR / f"mortgagedocai-{job_id}.rc"
+    return _ensure_temp_dir() / f"mortgagedocai-{job_id}.rc"
 
 
 def _quiet_env() -> dict[str, str]:

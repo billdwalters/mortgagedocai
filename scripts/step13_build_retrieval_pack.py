@@ -387,10 +387,14 @@ def main(argv=None) -> None:
             kws = [kw.strip().lower() for kw in group_str.split(",") if kw.strip()]
             if kws:
                 kw_groups.append(kws)
+        MAX_KEYWORD_INJECTIONS = 50
         if kw_groups:
             existing_cids = {it["chunk_id"] for it in items}
             injected = 0
             for cid, entry in chunk_index.items():
+                if injected >= MAX_KEYWORD_INJECTIONS:
+                    _dprint(f"[DEBUG] Step13: keyword injection cap reached ({MAX_KEYWORD_INJECTIONS})")
+                    break
                 if cid in existing_cids:
                     continue
                 text = (entry.get("text") or "").strip()

@@ -352,6 +352,7 @@ def main(argv=None) -> int:
                 "--evidence-max-chars", "4500",
                 "--ollama-timeout", "900",
                 "--save-llm-raw",
+                "--no-auto-retrieve",
             ]
             if args.debug:
                 step12_income_cmd.append("--debug")

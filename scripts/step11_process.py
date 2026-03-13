@@ -162,6 +162,7 @@ def _chunk_page_text(
 
 
 def _ensure_collection(client: QdrantClient, collection: str) -> None:
+    from qdrant_client.http.exceptions import UnexpectedResponse
     try:
         info = client.get_collection(collection)
         vp = info.config.params.vectors
@@ -171,7 +172,7 @@ def _ensure_collection(client: QdrantClient, collection: str) -> None:
             raise ContractError("Qdrant collection dim mismatch")
         if vp.distance != Distance.COSINE:
             raise ContractError("Qdrant collection distance mismatch")
-    except Exception:
+    except UnexpectedResponse:
         client.recreate_collection(
             collection_name=collection,
             vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
@@ -223,20 +224,23 @@ def main(argv=None) -> None:
     # Key: document_id -> list of chunk record dicts
     doc_chunks: Dict[str, List[Dict[str, Any]]] = {}
 
+    # Deferred Qdrant upserts: embed in batches but accumulate points in memory.
+    # Upserts are sent AFTER chunk text files are written to staging, so that a crash
+    # during upserts still leaves chunk text recoverable on disk.
+    deferred_points: List = []
+
     def flush_batch() -> None:
-        nonlocal upserts, batch_texts, batch_meta
+        nonlocal batch_texts, batch_meta
         if not batch_meta:
             return
 
         vecs = model.encode(
             batch_texts, normalize_embeddings=True, convert_to_numpy=True
         )
-        points = [
-            PointStruct(id=pid, vector=vecs[i].tolist(), payload=payload)
-            for i, (pid, payload) in enumerate(batch_meta)
-        ]
-        qdrant.upsert(collection_name=collection, points=points, wait=True)
-        upserts += len(points)
+        for i, (pid, payload) in enumerate(batch_meta):
+            deferred_points.append(
+                PointStruct(id=pid, vector=vecs[i].tolist(), payload=payload)
+            )
         batch_texts.clear()
         batch_meta.clear()
 
@@ -366,7 +370,16 @@ def main(argv=None) -> None:
         atomic_write_json(doc_chunk_dir / "chunk_map.json", chunk_map)
 
     # ---------------------------------------------------------------
-    # PART 1C: Write processing_run.json
+    # PART 2: Upsert deferred Qdrant points (chunk files already on disk in staging)
+    # ---------------------------------------------------------------
+    QDRANT_BATCH_SIZE = args.batch_size
+    for i in range(0, len(deferred_points), QDRANT_BATCH_SIZE):
+        batch = deferred_points[i : i + QDRANT_BATCH_SIZE]
+        qdrant.upsert(collection_name=collection, points=batch, wait=True)
+        upserts += len(batch)
+
+    # ---------------------------------------------------------------
+    # PART 2B: Write processing_run.json (after upserts so count is final)
     # ---------------------------------------------------------------
     processing_meta = {
         "tenant_id": args.tenant_id,
@@ -405,15 +418,22 @@ def main(argv=None) -> None:
     if not chunks_jsonl_files:
         raise ContractError("Step11 missing required artifacts: no chunks.jsonl found; aborting publish")
 
-    # Rerun policy: if run_final already exists (prior attempt), remove before atomic publish
+    # Rerun policy: if run_final already exists (prior attempt), rename old aside,
+    # publish new, then clean up old. Avoids data-loss window if crash occurs mid-publish.
+    import shutil
     overwrite = False
+    run_old = run_final.with_name(run_final.name + "._old")
     if run_final.exists():
-        import shutil
-        shutil.rmtree(run_final)
+        if run_old.exists():
+            shutil.rmtree(run_old)
+        run_final.rename(run_old)
         overwrite = True
 
     ensure_dir(run_final.parent)
     atomic_rename_dir(run_staging, run_final)
+
+    if run_old.exists():
+        shutil.rmtree(run_old)
     overwrite_msg = " (overwrote prior run)" if overwrite else ""
     print(f"✓ Step11 complete: {run_final} (upserts={upserts}, chunks={total_chunks}, docs={len(doc_chunks)}, skipped_encrypted={skipped_encrypted_count}){overwrite_msg}")
 

@@ -296,7 +296,7 @@ def _normalize_uw_conditions(llm_obj: Dict[str, Any], allowed_chunk_ids: set,
         })
 
     # Confidence
-    default_conf = 0.5 if llm_obj.get("_truncation_repaired") else 0.3
+    default_conf = 0.3 if llm_obj.get("_truncation_repaired") else 0.5
     confidence = float(llm_obj.get("confidence", default_conf) or default_conf)
     if not filtered:
         confidence = min(confidence, 0.3)
@@ -1888,7 +1888,7 @@ def _normalize_income_analysis(llm_obj: Dict[str, Any], allowed_chunk_ids: set,
                 pass
 
     # --- confidence calibration ---
-    default_conf = 0.5 if llm_obj.get("_truncation_repaired") else 0.3
+    default_conf = 0.3 if llm_obj.get("_truncation_repaired") else 0.5
     confidence = float(llm_obj.get("confidence", default_conf) or default_conf)
     has_income = bool(filtered_income)
     has_pitia = proposed_pitia is not None
@@ -2145,40 +2145,6 @@ def _load_uw_policy(tenant_id: str) -> Dict[str, Any]:
     return defaults
 
 
-def _build_version_info(policy: Dict[str, Any]) -> Dict[str, Any]:
-    """Build version.json metadata. Git operations fail gracefully."""
-    git_commit = None
-    git_dirty = None
-    try:
-        r = subprocess.run(
-            ["git", "-C", "/opt/mortgagedocai", "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if r.returncode == 0:
-            git_commit = r.stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    try:
-        r = subprocess.run(
-            ["git", "-C", "/opt/mortgagedocai", "status", "--porcelain"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if r.returncode == 0:
-            git_dirty = bool(r.stdout.strip())
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return {
-        "generated_at_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "git": {"commit": git_commit, "dirty": git_dirty},
-        "schemas": {"uw_decision": "v0.7"},
-        "policy": {
-            "policy_version": policy.get("policy_version"),
-            "policy_source": policy["policy_source"],
-            "path": policy.get("policy_path"),
-        },
-    }
-
-
 # ---------------------------------------------------------------------------
 # Step12 unified version blob (all profiles)
 # ---------------------------------------------------------------------------
@@ -2202,7 +2168,7 @@ def _build_version_blob(
 ) -> Dict[str, Any]:
     """Build the unified version/audit blob written to every Step12 profile output.
 
-    Mirrors _build_version_info git pattern; fails gracefully on git errors.
+    Fails gracefully on git errors.
     Note: offline_embeddings is a step13 argument and is intentionally absent.
     """
     git_commit = None
@@ -2957,7 +2923,12 @@ def main(argv=None) -> None:
         existing_meta = final / "_meta" / "analysis_run.json"
         if existing_meta.exists():
             _prev_run_meta = json.loads(existing_meta.read_text(encoding="utf-8"))
-        shutil.rmtree(final)
+        # Move old final aside instead of deleting — avoids data-loss window if crash
+        # occurs during LLM calls. Cleanup happens after successful atomic publish.
+        _old_final = final.with_name(final.name + "._old")
+        if _old_final.exists():
+            shutil.rmtree(_old_final)
+        final.rename(_old_final)
 
     run_meta: List[Dict[str, Any]] = []
 
@@ -3198,7 +3169,7 @@ def main(argv=None) -> None:
         citations = [c for c in citations_raw if (c or {}).get("chunk_id") in allowed_chunk_ids]
         _dprint(f"[DEBUG] citations: {len(citations_raw)} raw -> {len(citations)} after integrity filter "
                 f"(allowed_chunk_ids={len(allowed_chunk_ids)})")
-        default_conf = 0.5 if llm_obj.get("_truncation_repaired") else 0.3
+        default_conf = 0.3 if llm_obj.get("_truncation_repaired") else 0.5
         confidence = float(llm_obj.get("confidence", default_conf) or default_conf)
         if citations_raw and not citations:
             confidence = min(confidence, 0.2)
@@ -3468,6 +3439,11 @@ def main(argv=None) -> None:
 
     ensure_dir(final.parent)
     atomic_rename_dir(staging, final)
+    # Clean up old run directory after successful publish
+    _old_final_cleanup = final.with_name(final.name + "._old")
+    if _old_final_cleanup.exists():
+        import shutil as _shutil_cleanup
+        _shutil_cleanup.rmtree(_old_final_cleanup, ignore_errors=True)
     print(f"✓ Step12 complete (ollama): {final}")
 
 if __name__ == "__main__":

@@ -49,8 +49,8 @@ def _make_nas_loan(nas_base: Path, tenant_id: str, loan_id: str) -> Path:
 
 
 def _make_job_file(nas_analyze: Path, tenant_id: str, loan_id: str, status: str, job_id: str = "j1") -> Path:
-    """Create a job JSON file in _meta/jobs/."""
-    jobs_dir = nas_analyze / "_meta" / "jobs"
+    """Create a job JSON file in per-loan _meta/jobs/ directory."""
+    jobs_dir = nas_analyze / "tenants" / tenant_id / "loans" / loan_id / "_meta" / "jobs"
     jobs_dir.mkdir(parents=True, exist_ok=True)
     job_file = jobs_dir / f"{job_id}.json"
     job_file.write_text(json.dumps({

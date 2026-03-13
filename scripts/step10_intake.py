@@ -8,6 +8,7 @@ Step 10 — Intake / staging (canonical v1)
 from __future__ import annotations
 
 import argparse
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -54,8 +55,8 @@ def main(argv=None) -> None:
         if dst.exists() and not args.force:
             pass
         else:
-            dst.write_bytes(src.read_bytes())
-        h = sha256_file(dst)
+            shutil.copy2(str(src), str(dst))
+        h = sha256_file(src)
         staged_files.append({
             "document_id": h,
             "original_source_path": str(src.resolve().relative_to(SOURCE_MOUNT.resolve())),

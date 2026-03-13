@@ -150,8 +150,8 @@ def _run_id_to_utc_iso(run_id: str) -> str:
     return run_id[:11] + run_id[11:13] + ":" + run_id[13:15] + ":" + run_id[15:17] + run_id[17:]
 
 
-def _source_loan_last_modified_utc(path: Path) -> str:
-    """Max mtime of path and its immediate children (one level), as UTC ISO Z."""
+def _source_loan_last_modified_utc(path: Path) -> str | None:
+    """Max mtime of path and its immediate children (one level), as UTC ISO Z. Returns None on error."""
     try:
         best = path.stat().st_mtime if path.exists() else 0.0
         if path.is_dir():
@@ -162,7 +162,7 @@ def _source_loan_last_modified_utc(path: Path) -> str:
                     pass
         return datetime.fromtimestamp(best, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     except OSError:
-        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return None
 
 
 def _last_processed_run_for_loan(tenant_id: str, loan_id: str) -> tuple[str | None, str | None]:
@@ -208,6 +208,7 @@ def _list_source_loan_items(tenant_id: str) -> list[dict[str, Any]]:
                 last_processed_run_id, last_processed_utc = _last_processed_run_for_loan(tenant_id, loan_id)
                 needs_reprocess = (
                     last_processed_run_id is None
+                    or source_last_modified_utc is None
                     or (source_last_modified_utc > last_processed_utc)
                 )
                 items.append({
@@ -516,6 +517,9 @@ class _SecurityMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
+        # Block path traversal: reject any URL segment containing ".."
+        if ".." in path:
+            return JSONResponse(status_code=400, content={"detail": "Invalid path segment"})
         if path == self._UI_PREFIX or path.startswith(self._UI_PREFIX + "/"):
             return await call_next(request)
         if _API_KEY:
@@ -797,8 +801,9 @@ def get_source_loan(tenant_id: str, loan_id: str) -> dict[str, Any]:
     raise HTTPException(status_code=404, detail="Source loan not found")
 
 
-@app.post("/tenants/{tenant_id}/loans/{loan_id}/runs", status_code=202)
+@app.post("/tenants/{tenant_id}/loans/{loan_id}/runs", status_code=202, deprecated=True)
 def start_run(tenant_id: str, loan_id: str, body: StartRunBody) -> dict[str, Any]:
+    """Legacy fire-and-forget run launcher. Use POST .../jobs instead for tracked execution."""
     if not body.skip_intake and not body.source_path:
         raise HTTPException(status_code=422, detail="source_path is required when skip_intake is False")
     if body.skip_process and not body.run_id:

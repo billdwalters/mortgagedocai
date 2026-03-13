@@ -356,7 +356,8 @@ def fill_form(
         raise FileNotFoundError(f"Template file not found: {template_path}")
 
     source_data = _load_source_data(profiles_dir)
-    wb = openpyxl.load_workbook(str(template_path), data_only=False)
+    is_macro = template_path.suffix.lower() == ".xlsm"
+    wb = openpyxl.load_workbook(str(template_path), data_only=False, keep_vba=is_macro)
 
     cells_filled = 0
     skipped_fields: list[dict[str, str]] = []
@@ -377,10 +378,20 @@ def fill_form(
             continue
 
         # Select worksheet
-        if mapping.sheet:
-            ws = wb[mapping.sheet]
-        else:
-            ws = wb[wb.sheetnames[0]]
+        try:
+            if mapping.sheet:
+                ws = wb[mapping.sheet]
+            else:
+                ws = wb[wb.sheetnames[0]]
+        except KeyError:
+            skipped_fields.append({
+                "cell": mapping.cell,
+                "source": mapping.source,
+                "json_path": mapping.json_path,
+                "label": mapping.label,
+                "reason": f"sheet_not_found:{mapping.sheet}",
+            })
+            continue
 
         # Coerce value to appropriate Python type
         if mapping.cell_type in (CellType.NUMBER, CellType.CURRENCY, CellType.PERCENTAGE):

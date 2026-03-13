@@ -35,8 +35,8 @@ class LoanLock(Protocol):
         """Acquire per-loan lock (blocking with retry). Raises on failure."""
         ...
 
-    def release(self, tenant_id: str, loan_id: str) -> None:
-        """Release per-loan lock."""
+    def release(self, tenant_id: str, loan_id: str, job_id: str | None = None) -> None:
+        """Release per-loan lock. If job_id is given, only release if held by that job."""
         ...
 
     def clear_if_stale(self, tenant_id: str, loan_id: str) -> None:
