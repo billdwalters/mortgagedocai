@@ -790,6 +790,9 @@
         if (attr.name.toLowerCase().startsWith("on")) node.removeAttribute(attr.name);
       });
     });
+    tmp.querySelectorAll("a[href]").forEach(function (a) {
+      if (a.href && a.href.toLowerCase().trim().startsWith("javascript:")) a.removeAttribute("href");
+    });
     return tmp.innerHTML;
   }
 
@@ -1748,8 +1751,10 @@
       fetch(url, { method: "POST", headers: headers })
         .then(function (resp) {
           if (!resp.ok) {
-            return resp.json().then(function (err) {
-              throw new Error(err.detail || "Form generation failed");
+            return resp.text().then(function (t) {
+              var detail = "Form generation failed (HTTP " + resp.status + ")";
+              try { var err = JSON.parse(t); detail = err.detail || detail; } catch (e) { if (t) detail = t.substring(0, 200); }
+              throw new Error(detail);
             });
           }
           var filled = resp.headers.get("X-FormFill-Cells-Filled") || "?";
@@ -1796,7 +1801,7 @@
     function showHkMsg(msg, type) {
       if (!msgEl) return;
       msgEl.textContent = msg;
-      msgEl.className = "source-validation-msg" + (type === "error" ? " error" : type === "ok" ? " ok" : "");
+      msgEl.className = "source-validation-msg" + (type === "error" ? " source-validation-error" : type === "ok" ? " source-validation-ok" : "");
       msgEl.hidden = false;
       if (type === "ok") setTimeout(function () { msgEl.hidden = true; }, 8000);
     }
@@ -1857,7 +1862,7 @@
       msgEl.hidden = true;
       hkBtn.disabled = true;
 
-      apiJson("/tenants/" + tenantId + "/housekeeping/orphans")
+      apiJson("/tenants/" + encodeURIComponent(tenantId) + "/housekeeping/orphans")
         .then(function (data) {
           renderOrphans(data);
         })
@@ -1899,7 +1904,7 @@
         purgeBtn.disabled = true;
         msgEl.hidden = true;
 
-        apiJson("/tenants/" + tenantId + "/housekeeping/orphans/purge", {
+        apiJson("/tenants/" + encodeURIComponent(tenantId) + "/housekeeping/orphans/purge", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ loan_ids: ids, skip_qdrant: false }),

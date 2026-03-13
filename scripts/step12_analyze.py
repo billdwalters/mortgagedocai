@@ -70,7 +70,7 @@ def _run_step13(tenant_id: str, loan_id: str, run_id: str, query: str) -> Path:
         raise ContractError("Step13 script not found; cannot auto-retrieve")
 
     cmd = [
-        "python3", step13,
+        sys.executable, step13,
         "--tenant-id", tenant_id,
         "--loan-id", loan_id,
         "--run-id", run_id,
@@ -3129,7 +3129,7 @@ def main(argv=None) -> None:
                 f"# tenant_id={args.tenant_id} loan_id={args.loan_id} run_id={ctx.run_id}"
                 f" model={args.llm_model} profile={profile} query={question}\n"
             )
-            raw_path.write_text(header + llm_raw, encoding="utf-8")
+            atomic_write_text(raw_path, header + llm_raw)
             _dprint(f"[DEBUG] saved llm_raw -> {raw_path} ({raw_path.stat().st_size} bytes)")
 
         # For uw_conditions: synthesize answer text from conditions if model didn't return "answer"

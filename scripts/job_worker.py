@@ -21,6 +21,7 @@ if str(_scripts_dir) not in sys.path:
 
 from loan_service.adapters_disk import (
     ERROR_TRUNCATE,
+    STDOUT_TRUNCATE,
     load_manifest_if_present,
     result_from_manifest,
 )
@@ -97,7 +98,7 @@ def run_one_cycle(
 
         def _on_line(line: str) -> None:
             current = job.get("stdout") or ""
-            job["stdout"] = _truncate(current + line, 64000)
+            job["stdout"] = _truncate(current + line, STDOUT_TRUNCATE)
             now = time.time()
             is_phase = line.startswith("PHASE:")
             if is_phase or now - _last_flush[0] >= 5.0:

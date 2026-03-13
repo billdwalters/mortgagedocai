@@ -10,6 +10,7 @@
   --success: #22c55e;
   --error: #ef4444;
   --warn: #eab308;
+  --border: rgba(255, 255, 255, 0.1);
 }
 
 * {

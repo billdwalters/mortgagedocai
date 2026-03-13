@@ -2,8 +2,10 @@
 """Tests for job_runner production hardening: idempotency, per-loan lock, restart recovery."""
 from __future__ import annotations
 
+import atexit
 import json
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -16,9 +18,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import job_runner  # noqa: E402
 
 
+_tmp_dirs: list[str] = []
+
+
 def _tmp_nas():
     d = tempfile.mkdtemp(prefix="nas_analyze_")
+    _tmp_dirs.append(d)
     return Path(d)
+
+
+@atexit.register
+def _cleanup_tmp_dirs():
+    for d in _tmp_dirs:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def test_idempotency_same_job_id():

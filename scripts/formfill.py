@@ -415,6 +415,7 @@ def fill_form(
     # Save output
     output_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(output_path))
+    wb.close()
 
     audit = {
         "template_id": template_id,

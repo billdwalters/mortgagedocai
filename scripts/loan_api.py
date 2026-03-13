@@ -520,6 +520,9 @@ class _SecurityMiddleware(BaseHTTPMiddleware):
         # Block path traversal: reject any URL segment containing ".."
         if ".." in path:
             return JSONResponse(status_code=400, content={"detail": "Invalid path segment"})
+        # Reject path components with null bytes or control characters
+        if "\x00" in path or any(ord(c) < 32 for c in path):
+            return JSONResponse(status_code=400, content={"detail": "Invalid path characters"})
         if path == self._UI_PREFIX or path.startswith(self._UI_PREFIX + "/"):
             return await call_next(request)
         if _API_KEY:
@@ -808,6 +811,13 @@ def start_run(tenant_id: str, loan_id: str, body: StartRunBody) -> dict[str, Any
         raise HTTPException(status_code=422, detail="source_path is required when skip_intake is False")
     if body.skip_process and not body.run_id:
         raise HTTPException(status_code=422, detail="run_id is required when skip_process is True (run_loan_job.py contract)")
+    if body.source_path:
+        try:
+            sp = Path(body.source_path).resolve()
+            if not sp.is_relative_to(SOURCE_LOANS_ROOT.resolve()):
+                raise HTTPException(status_code=422, detail=f"source_path must be under {SOURCE_LOANS_ROOT}")
+        except (ValueError, OSError):
+            raise HTTPException(status_code=422, detail=f"source_path must be under {SOURCE_LOANS_ROOT}")
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "run_loan_job.py"),
@@ -1003,6 +1013,12 @@ def start_run_job(tenant_id: str, loan_id: str, body: StartRunRequest) -> dict[s
     source_path = (body.source_path or "").strip()
     if not source_path:
         raise HTTPException(status_code=422, detail="source_path is required and must be non-empty")
+    try:
+        sp = Path(source_path).resolve()
+        if not sp.is_relative_to(SOURCE_LOANS_ROOT.resolve()):
+            raise HTTPException(status_code=422, detail=f"source_path must be under {SOURCE_LOANS_ROOT}")
+    except (ValueError, OSError):
+        raise HTTPException(status_code=422, detail=f"source_path must be under {SOURCE_LOANS_ROOT}")
     if body.run_id is not None and body.run_id != "":
         if not _RUN_ID_PATTERN.match(body.run_id):
             raise HTTPException(
@@ -1106,7 +1122,10 @@ def query_run(tenant_id: str, loan_id: str, run_id: str, body: QueryBody) -> dic
     ]
     if body.offline_embeddings:
         step13_cmd.append("--offline-embeddings")
-    result13 = subprocess.run(step13_cmd, cwd=str(REPO_ROOT), env=env, capture_output=True, text=True)
+    try:
+        result13 = subprocess.run(step13_cmd, cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Step13 timed out after 600s")
     if result13.returncode != 0:
         stderr_tail = (result13.stderr or result13.stdout or "")[-2000:]
         raise HTTPException(status_code=500, detail=f"Step13 failed (exit {result13.returncode}). stderr tail: {stderr_tail}")
@@ -1123,7 +1142,10 @@ def query_run(tenant_id: str, loan_id: str, run_id: str, body: QueryBody) -> dic
         step12_cmd += ["--llm-model", body.llm_model]
     # Lower evidence + tokens for API "Ask a question" so Ollama can complete on weak/sandbox servers
     step12_cmd += ["--ollama-timeout", "600", "--evidence-max-chars", "6000", "--llm-max-tokens", "400"]
-    result12 = subprocess.run(step12_cmd, cwd=str(REPO_ROOT), env=env, capture_output=True, text=True)
+    try:
+        result12 = subprocess.run(step12_cmd, cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Step12 timed out after 900s")
     if result12.returncode != 0:
         stderr_tail = (result12.stderr or result12.stdout or "")[-2000:]
         raise HTTPException(status_code=500, detail=f"Step12 failed (exit {result12.returncode}). stderr tail: {stderr_tail}")

@@ -87,6 +87,10 @@ def main() -> int:
             step11_argv += ["--embedding-device", args.embedding_device]
         step11_main(step11_argv)
 
+        # Step 13 is NOT called explicitly here — Step12 auto-retrieves
+        # (no --no-auto-retrieve flag) so it triggers Step13 internally.
+        # The production entry point (run_loan_job.py) uses explicit Step13 calls.
+
         # Step 12
         step12_argv = [
             "--tenant-id", args.tenant_id,

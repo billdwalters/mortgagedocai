@@ -299,8 +299,12 @@ def delete_orphan_nas(
     for label, base in [("nas_ingest", nas_ingest), ("nas_chunk", nas_chunk), ("nas_analyze", nas_analyze)]:
         loan_dir = base / "tenants" / tenant_id / "loans" / loan_id
         if loan_dir.is_dir():
-            shutil.rmtree(loan_dir)
-            stats[label] = True
+            try:
+                shutil.rmtree(loan_dir)
+                stats[label] = True
+            except OSError:
+                # Partial delete on NAS/SMB — report as not fully deleted
+                stats[label] = False
         else:
             stats[label] = False
     return stats

@@ -143,7 +143,7 @@ def _chunk_page_text(
         chunks.append(t[i:end])
         if end >= n:
             break
-        i = max(0, end - overlap)
+        i = max(i + 1, end - overlap)
 
     merged: List[str] = []
     buf = ""

@@ -229,7 +229,7 @@ def test_fill_form_preserves_formulas(tmp_path):
     # J10 should still have the formula =C10*G10*52/12
     assert ws["J10"].value is not None
     val = str(ws["J10"].value)
-    assert val.startswith("=") or val.startswith("="), f"Expected formula in J10, got {val}"
+    assert val.startswith("="), f"Expected formula in J10, got {val}"
 
 
 def test_fill_form_invalid_template_raises(tmp_path):
