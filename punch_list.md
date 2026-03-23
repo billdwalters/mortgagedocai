@@ -90,8 +90,9 @@ Added `GET /tenants/{t}/loans/{l}/runs/{r}/report` endpoint that renders a print
 ~~Show how many jobs are queued when multiple are submitted.~~
 Added queue depth badge in header bar that polls `GET /jobs` every 15 seconds. Shows "N jobs queued" count for PENDING/RUNNING/CLAIMED jobs. Badge auto-hides when queue is empty.
 
-### 21. Mobile responsiveness
-Layout breaks on small screens; touch targets too small (should be 44x44px minimum). Chat input row wraps awkwardly on narrow viewports.
+### ~~21. Mobile responsiveness~~ DONE (2026-03-23)
+~~Layout breaks on small screens; touch targets too small (should be 44x44px minimum). Chat input row wraps awkwardly on narrow viewports.~~
+Added comprehensive `@media (max-width: 700px)` styles: sidebar becomes scrollable top section, 44px minimum touch targets on all buttons, chat input/send stack vertically, main actions stack vertically, summary/comparison grids go single-column, header compacts, run history table scrolls horizontally. Viewport meta already present.
 
 ### 22. Keyboard navigation
 Can't arrow through the loan list; no visible focus indicators on buttons or interactive elements.
