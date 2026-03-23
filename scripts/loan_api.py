@@ -347,6 +347,168 @@ def _build_artifacts_index(tenant_id: str, loan_id: str, run_id: str) -> dict[st
     }
 
 
+# ---------------------------------------------------------------------------
+# Run history & comparison helpers (punch list #16)
+# ---------------------------------------------------------------------------
+
+def _read_json_safe(path: Path) -> dict | None:
+    """Read a JSON file, returning None on missing file or parse error."""
+    try:
+        with path.open() as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _build_run_summary(tenant_id: str, loan_id: str, run_id: str) -> dict[str, Any]:
+    """Build a compact summary of key outputs for one run (for history & comparison)."""
+    run_dir = NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id / run_id
+    if not run_dir.is_dir():
+        raise FileNotFoundError(f"Run directory not found: {run_dir}")
+
+    # Manifest
+    manifest = _read_json_safe(run_dir / "job_manifest.json")
+    status = manifest.get("status") if manifest else None
+
+    # Available profiles
+    profiles_dir = run_dir / "outputs" / "profiles"
+    profiles_available: list[str] = []
+    if profiles_dir.is_dir():
+        profiles_available = sorted(d.name for d in profiles_dir.iterdir() if d.is_dir())
+
+    # Decision
+    decision_data = _read_json_safe(profiles_dir / "uw_decision" / "decision.json")
+    decision: dict | None = None
+    if decision_data:
+        dp = decision_data.get("decision_primary") or {}
+        decision = {
+            "status": dp.get("status"),
+            "program": (decision_data.get("ruleset") or {}).get("program"),
+            "confidence": decision_data.get("confidence"),
+            "decision_version": decision_data.get("decision_version"),
+        }
+
+    # DTI
+    dti_data = _read_json_safe(profiles_dir / "income_analysis" / "dti.json")
+    dti: dict | None = None
+    if dti_data:
+        dti = {
+            "front_end_dti": dti_data.get("front_end_dti"),
+            "back_end_dti": dti_data.get("back_end_dti"),
+            "housing_payment_used": dti_data.get("housing_payment_used"),
+            "monthly_debt_total": dti_data.get("monthly_debt_total"),
+            "monthly_income_total": dti_data.get("monthly_income_total"),
+        }
+
+    # Income summary
+    income_data = _read_json_safe(profiles_dir / "income_analysis" / "income_analysis.json")
+    income_summary: dict | None = None
+    if income_data:
+        items = income_data.get("income_items") or []
+        borrowers = income_data.get("borrowers") or []
+        income_summary = {
+            "monthly_income_total": income_data.get("monthly_income_total"),
+            "monthly_liabilities_total": income_data.get("monthly_liabilities_total"),
+            "income_item_count": len(items),
+            "borrower_count": len(borrowers),
+        }
+
+    # Conditions summary
+    cond_data = _read_json_safe(profiles_dir / "uw_conditions" / "conditions.json")
+    conditions_summary: dict | None = None
+    if cond_data:
+        conds = cond_data.get("conditions") or []
+        by_timing: dict[str, int] = {}
+        by_category: dict[str, int] = {}
+        for c in conds:
+            t = c.get("timing", "Unknown")
+            by_timing[t] = by_timing.get(t, 0) + 1
+            cat = c.get("category", "Unknown")
+            by_category[cat] = by_category.get(cat, 0) + 1
+        conditions_summary = {
+            "total_count": len(conds),
+            "by_timing": by_timing,
+            "by_category": by_category,
+        }
+
+    return {
+        "run_id": run_id,
+        "generated_at_utc": _run_id_to_utc_iso(run_id),
+        "status": status,
+        "profiles_available": profiles_available,
+        "decision": decision,
+        "dti": dti,
+        "income_summary": income_summary,
+        "conditions_summary": conditions_summary,
+    }
+
+
+def _build_comparison_diff(a: dict, b: dict) -> dict[str, dict]:
+    """Compare two run summaries and return a dict of changed fields with deltas."""
+    changes: dict[str, dict] = {}
+
+    def _compare_str(key: str, a_val: Any, b_val: Any) -> None:
+        changes[key] = {"a": a_val, "b": b_val, "changed": a_val != b_val}
+
+    def _compare_num(key: str, a_val: Any, b_val: Any) -> None:
+        changed = a_val != b_val
+        entry: dict[str, Any] = {"a": a_val, "b": b_val, "changed": changed}
+        if changed and a_val is not None and b_val is not None:
+            entry["delta"] = round(b_val - a_val, 6)
+        changes[key] = entry
+
+    # Decision
+    a_dec = a.get("decision") or {}
+    b_dec = b.get("decision") or {}
+    _compare_str("decision_status", a_dec.get("status"), b_dec.get("status"))
+    _compare_str("decision_program", a_dec.get("program"), b_dec.get("program"))
+    _compare_num("decision_confidence", a_dec.get("confidence"), b_dec.get("confidence"))
+
+    # DTI
+    a_dti = a.get("dti") or {}
+    b_dti = b.get("dti") or {}
+    for key in ("front_end_dti", "back_end_dti", "monthly_income_total", "monthly_debt_total"):
+        _compare_num(key, a_dti.get(key), b_dti.get(key))
+
+    # Conditions
+    a_cond = a.get("conditions_summary") or {}
+    b_cond = b.get("conditions_summary") or {}
+    _compare_num("conditions_count", a_cond.get("total_count"), b_cond.get("total_count"))
+
+    return changes
+
+
+def _build_enriched_run_list(
+    tenant_id: str, loan_id: str, *, limit: int = 20
+) -> list[dict[str, Any]]:
+    """Return a list of run summaries (newest first), with optional limit."""
+    loan_dir = NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id
+    if not loan_dir.is_dir():
+        return []
+    run_ids = sorted(
+        (d.name for d in loan_dir.iterdir()
+         if d.is_dir() and _RUN_ID_PATTERN.match(d.name)
+         and ((d / "job_manifest.json").exists() or (d / "outputs").is_dir())),
+        reverse=True,
+    )
+    if limit:
+        run_ids = run_ids[:limit]
+    results = []
+    for rid in run_ids:
+        try:
+            summary = _build_run_summary(tenant_id, loan_id, rid)
+            # Slim version for list (drop heavy detail)
+            results.append({
+                "run_id": summary["run_id"],
+                "generated_at_utc": summary["generated_at_utc"],
+                "status": summary["status"],
+                "profiles_available": summary["profiles_available"],
+            })
+        except FileNotFoundError:
+            continue
+    return results
+
+
 _FILE_TYPE_MAP = {
     ".pdf": "PDF", ".xlsx": "XLSX", ".xls": "XLS", ".docx": "DOCX",
     ".doc": "DOC", ".jpg": "JPG", ".jpeg": "JPEG", ".png": "PNG",
@@ -851,7 +1013,7 @@ def start_run(tenant_id: str, loan_id: str, body: StartRunBody) -> dict[str, Any
 
 
 @app.get("/tenants/{tenant_id}/loans/{loan_id}/runs")
-def list_runs(tenant_id: str, loan_id: str) -> dict[str, list[str]]:
+def list_runs(tenant_id: str, loan_id: str, limit: int = 20) -> dict[str, Any]:
     loan_dir = NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id
     if not loan_dir.is_dir():
         raise HTTPException(status_code=404, detail=f"Loan path not found: {loan_dir}")
@@ -861,7 +1023,42 @@ def list_runs(tenant_id: str, loan_id: str) -> dict[str, list[str]]:
             continue
         if (d / "job_manifest.json").exists() or (d / "outputs").is_dir():
             run_ids.append(d.name)
-    return {"run_ids": sorted(run_ids)}
+    enriched = _build_enriched_run_list(tenant_id, loan_id, limit=limit)
+    return {"run_ids": sorted(run_ids), "runs": enriched}
+
+
+@app.get("/tenants/{tenant_id}/loans/{loan_id}/runs/compare")
+def compare_runs(
+    tenant_id: str, loan_id: str, run_a: str, run_b: str
+) -> dict[str, Any]:
+    """Compare two runs side-by-side with change deltas."""
+    for rid in (run_a, run_b):
+        if not _RUN_ID_PATTERN.match(rid):
+            raise HTTPException(status_code=400, detail=f"Invalid run_id format: {rid}")
+    try:
+        summary_a = _build_run_summary(tenant_id, loan_id, run_a)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_a}")
+    try:
+        summary_b = _build_run_summary(tenant_id, loan_id, run_b)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_b}")
+    return {
+        "run_a": summary_a,
+        "run_b": summary_b,
+        "changes": _build_comparison_diff(summary_a, summary_b),
+    }
+
+
+@app.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/summary")
+def get_run_summary(tenant_id: str, loan_id: str, run_id: str) -> dict[str, Any]:
+    """Compact summary of key outputs for one run."""
+    if not _RUN_ID_PATTERN.match(run_id):
+        raise HTTPException(status_code=400, detail=f"Invalid run_id format: {run_id}")
+    try:
+        return _build_run_summary(tenant_id, loan_id, run_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
 
 
 @app.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}")

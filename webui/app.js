@@ -439,6 +439,7 @@
     updateProcessLoanButton();
     loadSummaryDashboard(loanId, selectedRunId);
     refreshChatProfileAvailability();
+    if (window._loadRunHistory) window._loadRunHistory(loanId);
   }
 
   // ——— Source path edit and browse ———
@@ -753,6 +754,7 @@
               if (el("details-run-id")) el("details-run-id").textContent = "run_id: " + job.run_id + " (" + formatTimestamp(job.run_id) + ")";
               loadSummaryDashboard(selectedLoanId, job.run_id);
               refreshChatProfileAvailability();
+              if (window._loadRunHistory) window._loadRunHistory(selectedLoanId);
             }
           }
         })
@@ -1784,6 +1786,245 @@
     });
 
     loadTemplates();
+  })();
+
+  // ——— Run History & Comparison (punch list #16) ———
+  (function initRunHistory() {
+    var historyPanel = el("run-history-panel");
+    var runSelector = el("run-selector");
+    var historyCount = el("run-history-count");
+    var historyTbody = el("run-history-tbody");
+    var compareBtn = el("compare-runs-btn");
+    var comparisonPanel = el("comparison-panel");
+    var comparisonContent = el("comparison-content");
+    var closeComparisonBtn = el("close-comparison");
+    if (!historyPanel || !runSelector) return;
+
+    // Expose for selectLoan to call
+    window._loadRunHistory = loadRunHistory;
+
+    async function loadRunHistory(loanId) {
+      if (!loanId) {
+        historyPanel.hidden = true;
+        return;
+      }
+      try {
+        var tenant = getTenantId();
+        var data = await apiJson("/tenants/" + encodeURIComponent(tenant) + "/loans/" + encodeURIComponent(loanId) + "/runs?limit=20");
+        var runs = data.runs || [];
+        if (runs.length <= 1) {
+          historyPanel.hidden = true;
+          return;
+        }
+        renderRunSelector(runs);
+        renderRunHistoryTable(runs);
+        if (historyCount) historyCount.textContent = String(runs.length);
+        historyPanel.hidden = false;
+      } catch (e) {
+        historyPanel.hidden = true;
+      }
+    }
+
+    function renderRunSelector(runs) {
+      runSelector.innerHTML = "";
+      runs.forEach(function (r) {
+        var opt = document.createElement("option");
+        opt.value = r.run_id;
+        opt.textContent = formatTimestamp(r.run_id) + (r.status ? " (" + r.status + ")" : "");
+        runSelector.appendChild(opt);
+      });
+      // Select the current selectedRunId
+      if (selectedRunId) runSelector.value = selectedRunId;
+    }
+
+    runSelector.addEventListener("change", function () {
+      var newRunId = runSelector.value;
+      if (!newRunId || newRunId === selectedRunId) return;
+      selectedRunId = newRunId;
+      var detailsRun = el("details-run-id");
+      if (detailsRun) detailsRun.textContent = "run_id: " + selectedRunId + " (" + formatTimestamp(selectedRunId) + ")";
+      loadSummaryDashboard(selectedLoanId, selectedRunId);
+      refreshChatProfileAvailability();
+      // Hide comparison when switching runs
+      if (comparisonPanel) comparisonPanel.hidden = true;
+    });
+
+    function renderRunHistoryTable(runs) {
+      if (!historyTbody) return;
+      historyTbody.innerHTML = "";
+      runs.forEach(function (r) {
+        var tr = document.createElement("tr");
+        // Checkbox cell
+        var tdCb = document.createElement("td");
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.value = r.run_id;
+        cb.className = "run-compare-cb";
+        cb.addEventListener("change", onCheckboxChange);
+        tdCb.appendChild(cb);
+        tr.appendChild(tdCb);
+        // Run date cell
+        var tdRun = document.createElement("td");
+        tdRun.textContent = formatTimestamp(r.run_id);
+        tr.appendChild(tdRun);
+        // Status cell
+        var tdStatus = document.createElement("td");
+        var statusClass = r.status === "SUCCESS" ? "success" : r.status === "FAILED" ? "fail" : "";
+        tdStatus.innerHTML = statusClass
+          ? "<span class=\"summary-status-badge " + statusClass + "\">" + escapeHtml(r.status || "—") + "</span>"
+          : escapeHtml(r.status || "—");
+        tr.appendChild(tdStatus);
+        // Profiles cell
+        var tdProf = document.createElement("td");
+        (r.profiles_available || []).forEach(function (p) {
+          var pill = document.createElement("span");
+          pill.className = "profile-pill";
+          pill.textContent = p;
+          tdProf.appendChild(pill);
+        });
+        tr.appendChild(tdProf);
+        historyTbody.appendChild(tr);
+      });
+    }
+
+    function onCheckboxChange() {
+      var checked = historyTbody.querySelectorAll(".run-compare-cb:checked");
+      if (compareBtn) compareBtn.disabled = checked.length !== 2;
+    }
+
+    if (compareBtn) {
+      compareBtn.addEventListener("click", function () {
+        var checked = historyTbody.querySelectorAll(".run-compare-cb:checked");
+        if (checked.length !== 2) return;
+        var runA = checked[0].value;
+        var runB = checked[1].value;
+        doCompare(runA, runB);
+      });
+    }
+
+    async function doCompare(runA, runB) {
+      if (!comparisonPanel || !comparisonContent) return;
+      compareBtn.disabled = true;
+      try {
+        var tenant = getTenantId();
+        var path = "/tenants/" + encodeURIComponent(tenant) + "/loans/" + encodeURIComponent(selectedLoanId)
+          + "/runs/compare?run_a=" + encodeURIComponent(runA) + "&run_b=" + encodeURIComponent(runB);
+        var data = await apiJson(path);
+        renderComparison(data);
+        comparisonPanel.hidden = false;
+        comparisonPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch (e) {
+        showInlineMsg("Comparison failed: " + e.message, "error");
+      } finally {
+        compareBtn.disabled = false;
+      }
+    }
+
+    function renderComparison(data) {
+      if (!comparisonContent) return;
+      var a = data.run_a || {};
+      var b = data.run_b || {};
+      var changes = data.changes || {};
+      var html = "";
+
+      // Column A
+      html += "<div class=\"comparison-col\">";
+      html += "<h3>Run A: " + escapeHtml(formatTimestamp(a.run_id || "")) + "</h3>";
+      html += renderComparisonSummaryCol(a);
+      html += "</div>";
+
+      // Column B
+      html += "<div class=\"comparison-col\">";
+      html += "<h3>Run B: " + escapeHtml(formatTimestamp(b.run_id || "")) + "</h3>";
+      html += renderComparisonSummaryCol(b);
+      html += "</div>";
+
+      // Changes summary
+      var changesList = buildChangesList(changes);
+      if (changesList.length > 0) {
+        html += "<div class=\"comparison-summary\">";
+        html += "<strong>What changed:</strong>";
+        html += "<ul>" + changesList.map(function (c) { return "<li>" + c + "</li>"; }).join("") + "</ul>";
+        html += "</div>";
+      } else {
+        html += "<div class=\"comparison-summary\"><strong>No significant changes between these runs.</strong></div>";
+      }
+
+      comparisonContent.innerHTML = html;
+    }
+
+    function renderComparisonSummaryCol(summary) {
+      var html = "";
+      // Decision
+      var dec = summary.decision || {};
+      var status = (dec.status || "—").toUpperCase();
+      var cls = status === "PASS" ? "pass" : status === "FAIL" ? "fail" : "unknown";
+      html += "<div class=\"comparison-row\"><span class=\"comparison-row-label\">Decision</span>";
+      html += "<span class=\"summary-decision-badge " + cls + "\">" + escapeHtml(status) + "</span></div>";
+      // Program
+      if (dec.program) {
+        html += "<div class=\"comparison-row\"><span class=\"comparison-row-label\">Program</span>";
+        html += "<span class=\"comparison-row-value\">" + escapeHtml(dec.program) + "</span></div>";
+      }
+      // DTI
+      var dti = summary.dti || {};
+      html += "<div class=\"comparison-row\"><span class=\"comparison-row-label\">Front-end DTI</span>";
+      html += "<span class=\"comparison-row-value\">" + formatPct(dti.front_end_dti) + "</span></div>";
+      html += "<div class=\"comparison-row\"><span class=\"comparison-row-label\">Back-end DTI</span>";
+      html += "<span class=\"comparison-row-value\">" + formatPct(dti.back_end_dti) + "</span></div>";
+      // Income
+      var inc = summary.income_summary || {};
+      html += "<div class=\"comparison-row\"><span class=\"comparison-row-label\">Monthly Income</span>";
+      html += "<span class=\"comparison-row-value\">" + formatMoney(inc.monthly_income_total) + "</span></div>";
+      // Conditions
+      var cond = summary.conditions_summary || {};
+      html += "<div class=\"comparison-row\"><span class=\"comparison-row-label\">Conditions</span>";
+      html += "<span class=\"comparison-row-value\">" + (cond.total_count != null ? cond.total_count : "—") + "</span></div>";
+      return html;
+    }
+
+    function formatMoney(v) {
+      if (v == null || isNaN(v)) return "—";
+      return "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function buildChangesList(changes) {
+      var list = [];
+      var c;
+      c = changes.decision_status;
+      if (c && c.changed) list.push("Decision changed from <strong>" + escapeHtml(String(c.a || "—")) + "</strong> to <strong>" + escapeHtml(String(c.b || "—")) + "</strong>");
+      c = changes.decision_program;
+      if (c && c.changed) list.push("Program changed from " + escapeHtml(String(c.a || "—")) + " to " + escapeHtml(String(c.b || "—")));
+      c = changes.back_end_dti;
+      if (c && c.changed && c.delta != null) {
+        var pp = (c.delta * 100).toFixed(1);
+        var dir = c.delta < 0 ? "improved" : "worsened";
+        list.push("Back-end DTI " + dir + " by " + Math.abs(Number(pp)).toFixed(1) + " pp");
+      }
+      c = changes.front_end_dti;
+      if (c && c.changed && c.delta != null) {
+        var pp2 = (c.delta * 100).toFixed(1);
+        var dir2 = c.delta < 0 ? "improved" : "worsened";
+        list.push("Front-end DTI " + dir2 + " by " + Math.abs(Number(pp2)).toFixed(1) + " pp");
+      }
+      c = changes.monthly_income_total;
+      if (c && c.changed && c.delta != null) {
+        var prefix = c.delta > 0 ? "+" : "";
+        list.push("Monthly income changed by " + prefix + formatMoney(c.delta));
+      }
+      c = changes.conditions_count;
+      if (c && c.changed && c.delta != null) {
+        var more = c.delta > 0 ? c.delta + " more" : Math.abs(c.delta) + " fewer";
+        list.push(more + " conditions");
+      }
+      return list;
+    }
+
+    if (closeComparisonBtn) {
+      closeComparisonBtn.addEventListener("click", function () {
+        if (comparisonPanel) comparisonPanel.hidden = true;
+      });
+    }
   })();
 
   // ——— Housekeeping (orphaned loan cleanup) ———

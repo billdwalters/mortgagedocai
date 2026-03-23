@@ -70,8 +70,9 @@ Added `formatTimestamp()` utility that parses both run_id style (`2026-02-26T060
 
 ## Web UI — Nice to Have
 
-### 16. Run history and comparison
-Show all runs for a loan, not just the latest. Allow comparing outputs between runs to see what changed.
+### ~~16. Run history and comparison~~ DONE (2026-03-23)
+~~Show all runs for a loan, not just the latest. Allow comparing outputs between runs to see what changed.~~
+Enhanced `GET /runs` endpoint to return per-run metadata (status, profiles). Added `GET /runs/{run_id}/summary` (compact key outputs) and `GET /runs/compare?run_a=...&run_b=...` (side-by-side diff with deltas). UI: run selector dropdown to switch between runs, expandable run history table with checkboxes, side-by-side comparison panel showing decision/DTI/income/conditions changes with plain-language summary. 12 new tests in `test_run_history.py`.
 
 ### 17. Batch processing
 Queue multiple loans for processing at once instead of one at a time.

@@ -110,10 +110,35 @@
         </div>
 
         <p id="source-validation-msg" class="source-validation-msg" hidden></p>
+        <div id="run-history-panel" class="run-history-panel" hidden>
+          <div class="run-history-header">
+            <label class="run-selector-label">Run:
+              <select id="run-selector" class="run-selector"></select>
+            </label>
+            <button type="button" id="compare-runs-btn" class="btn-secondary" disabled>Compare Selected</button>
+          </div>
+          <details id="run-history-details" class="details-expand">
+            <summary>Run History (<span id="run-history-count">0</span> runs)</summary>
+            <table id="run-history-table" class="summary-rules-table">
+              <thead><tr>
+                <th></th><th>Run</th><th>Status</th><th>Profiles</th>
+              </tr></thead>
+              <tbody id="run-history-tbody"></tbody>
+            </table>
+          </details>
+        </div>
+
         <details id="details-expand" class="details-expand">
           <summary>Details</summary>
           <p id="details-run-id" class="muted small"></p>
         </details>
+      </section>
+
+      <section id="comparison-panel" class="section" hidden>
+        <h2>Run Comparison
+          <button type="button" id="close-comparison" class="btn-link">Close</button>
+        </h2>
+        <div id="comparison-content" class="comparison-content"></div>
       </section>
 
       <section id="progress-panel" class="section progress-panel" hidden>
@@ -188,6 +213,6 @@
   </div>
 
   <script src="/ui/static/marked.min.js"></script>
-  <script src="/ui/static/app.js?v=20260310c"></script>
+  <script src="/ui/static/app.js?v=20260323a"></script>
 </body>
 </html>

@@ -160,6 +160,7 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 - `test_step12_income_analysis.py` — Borrowers, frequencies, DTI, UW decision (21 tests)
 - `test_step13_chunk_index.py` — Chunk index loading (9 tests)
 - `test_cleanup_orphans.py` — Orphaned loan detection and cleanup (10 tests)
+- `test_run_history.py` — Run history summaries, comparison diffs, enriched run list (12 tests)
 
 **Note:** `test_step13_chunk_index.py` mocks `qdrant_client` at import time — safe to run on Windows dev machine without full production deps.
 
@@ -167,7 +168,7 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 
 ## Recently Completed Work (as of 2026-03-13)
 
-All TDD (red → green → regression). 117 tests passing (107 main + 10 cleanup_orphans).
+All TDD (red → green → regression). 129 tests passing (119 main + 10 cleanup_orphans).
 
 ### System-Wide Code Audit — Round 1 + Round 2 (2026-03-13)
 | Severity | Count | Key Fixes |
@@ -311,7 +312,7 @@ cd m:\mortgagedocai
 python -m py_compile scripts/step12_analyze.py
 python -m py_compile scripts/step13_build_retrieval_pack.py
 
-# Run full test suite (117 tests)
+# Run full test suite (129 tests)
 python -m pytest scripts/test_formfill.py \
                  scripts/test_step13_chunk_index.py \
                  scripts/test_step12_version_blob.py \
@@ -320,7 +321,8 @@ python -m pytest scripts/test_formfill.py \
                  scripts/test_job_hardening.py \
                  scripts/test_source_path_validation.py \
                  scripts/test_step12_income_analysis.py \
-                 scripts/test_cleanup_orphans.py -q
+                 scripts/test_cleanup_orphans.py \
+                 scripts/test_run_history.py -q
 
 # Step13 self-test (Linux AI server, requires qdrant_client)
 python scripts/step13_build_retrieval_pack.py --self-test
