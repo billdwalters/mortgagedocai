@@ -82,8 +82,9 @@ Added `POST /tenants/{tenant_id}/batch/process` endpoint accepting up to 50 loan
 ~~Loan list is flat and unsorted. Add search by loan ID, sort by status/date, or filter by needs-processing.~~
 Added search input (filters by loan ID or folder name), filter buttons (All / Needs Processing / Done), and sort dropdown (ID asc/desc, newest/oldest). All client-side filtering on already-loaded data. Loan list re-renders on search/filter/sort change, preserving selected state and batch checkboxes.
 
-### 19. Export / report generation
-Generate a clean summary PDF or printable report from the analysis outputs.
+### ~~19. Export / report generation~~ DONE (2026-03-23)
+~~Generate a clean summary PDF or printable report from the analysis outputs.~~
+Added `GET /tenants/{t}/loans/{l}/runs/{r}/report` endpoint that renders a printable HTML report via Jinja2 template. Report includes: UW decision with badge, DTI analysis with bar charts, income breakdown with borrowers and items table, conditions grouped by category with timing badges, and document inventory. Print-optimized CSS with page breaks. "Export Report" button in main actions opens report in new tab. Users can Print to PDF (Ctrl+P) for clean PDF output.
 
 ### 20. Job queue depth indicator
 Show how many jobs are queued when multiple are submitted.

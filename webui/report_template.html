@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Loan {{ loan_id }} — Analysis Report</title>
+<style>
+  @page { margin: 0.75in; size: letter; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    color: #1a1a1a;
+    line-height: 1.5;
+    margin: 0;
+    padding: 2rem;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; border-bottom: 2px solid #7c3aed; padding-bottom: 0.25rem; color: #333; }
+  h3 { font-size: 0.9rem; margin: 1rem 0 0.25rem; color: #555; }
+  .report-header { border-bottom: 1px solid #ddd; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+  .report-meta { font-size: 0.8125rem; color: #666; }
+  .report-meta span { margin-right: 1.5rem; }
+
+  /* Decision badge */
+  .decision-badge {
+    display: inline-block;
+    padding: 0.3rem 1rem;
+    border-radius: 6px;
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+  .decision-badge.pass { background: #dcfce7; color: #166534; border: 2px solid #22c55e; }
+  .decision-badge.fail { background: #fee2e2; color: #991b1b; border: 2px solid #ef4444; }
+  .decision-badge.unknown { background: #fef9c3; color: #854d0e; border: 2px solid #eab308; }
+  .decision-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .decision-detail { font-size: 0.875rem; color: #555; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; font-size: 0.8125rem; }
+  th { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid #ccc; color: #555; font-weight: 600; }
+  td { padding: 0.35rem 0.5rem; border-bottom: 1px solid #eee; }
+  tr:last-child td { border-bottom: none; }
+
+  /* DTI bars (print-friendly) */
+  .dti-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; font-size: 0.8125rem; }
+  .dti-label { width: 6rem; color: #555; flex-shrink: 0; }
+  .dti-bar-track { flex: 1; height: 12px; background: #f0f0f0; border-radius: 6px; overflow: hidden; border: 1px solid #ddd; }
+  .dti-bar-fill { height: 100%; border-radius: 6px; }
+  .dti-bar-fill.ok { background: #22c55e; }
+  .dti-bar-fill.over { background: #ef4444; }
+  .dti-value { width: 4rem; text-align: right; font-weight: 600; flex-shrink: 0; }
+
+  /* Financial rows */
+  .fin-row { display: flex; justify-content: space-between; padding: 0.25rem 0; font-size: 0.8125rem; border-bottom: 1px solid #f0f0f0; }
+  .fin-label { color: #555; }
+  .fin-value { font-weight: 600; }
+
+  /* Conditions */
+  .condition-group { margin-bottom: 1rem; }
+  .condition-group-title { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #888; border-bottom: 1px solid #eee; padding-bottom: 0.2rem; margin-bottom: 0.4rem; }
+  .condition-item { padding: 0.3rem 0.5rem; margin-bottom: 0.25rem; font-size: 0.8125rem; border-left: 3px solid #7c3aed; padding-left: 0.75rem; }
+  .timing-badge { font-size: 0.65rem; font-weight: 600; padding: 0.1rem 0.4rem; border-radius: 3px; margin-left: 0.5rem; }
+  .timing-prior-docs { background: #ede9fe; color: #7c3aed; }
+  .timing-prior-closing { background: #fef9c3; color: #854d0e; }
+  .timing-post-closing { background: #f0f0f0; color: #666; }
+
+  /* Document inventory */
+  .doc-row { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.2rem 0; font-size: 0.8125rem; border-bottom: 1px solid #f5f5f5; }
+  .doc-name { flex: 1; word-break: break-all; }
+  .doc-type { width: 3rem; color: #888; font-size: 0.75rem; }
+  .doc-pages { width: 4rem; text-align: right; color: #555; }
+
+  .footer { margin-top: 2rem; padding-top: 0.75rem; border-top: 1px solid #ddd; font-size: 0.75rem; color: #999; }
+
+  @media print {
+    body { padding: 0; }
+    .no-print { display: none !important; }
+    h2 { break-after: avoid; }
+    .condition-group, table { break-inside: avoid; }
+  }
+  .print-btn {
+    position: fixed; top: 1rem; right: 1rem;
+    padding: 0.5rem 1rem; background: #7c3aed; color: white;
+    border: none; border-radius: 4px; font-size: 0.875rem; cursor: pointer;
+  }
+  .print-btn:hover { opacity: 0.9; }
+</style>
+</head>
+<body>
+
+<button class="print-btn no-print" onclick="window.print()">Print / Save PDF</button>
+
+<div class="report-header">
+  <h1>Loan {{ loan_id }} — Analysis Report</h1>
+  <div class="report-meta">
+    <span>Tenant: {{ tenant_id }}</span>
+    <span>Run: {{ run_id }}</span>
+    <span>Generated: {{ generated_at }}</span>
+  </div>
+</div>
+
+{# ——— Decision ——— #}
+{% if decision %}
+<h2>Underwriting Decision</h2>
+<div class="decision-row">
+  {% set status = (decision.decision_primary.status or "UNKNOWN")|upper %}
+  {% set cls = "pass" if status == "PASS" else ("fail" if status == "FAIL" else "unknown") %}
+  <span class="decision-badge {{ cls }}">{{ status }}</span>
+  {% if decision.ruleset and decision.ruleset.program %}
+  <span class="decision-detail">Program: {{ decision.ruleset.program|replace("_", " ") }}</span>
+  {% endif %}
+  {% if decision.confidence is not none %}
+  <span class="decision-detail">Confidence: {{ "%.1f"|format(decision.confidence * 100) }}%</span>
+  {% endif %}
+  {% if decision.decision_version %}
+  <span class="decision-detail">Version: {{ decision.decision_version }}</span>
+  {% endif %}
+</div>
+{% if decision.decision_primary and decision.decision_primary.reasons %}
+<h3>Reasons</h3>
+<ul>
+{% for r in decision.decision_primary.reasons %}
+  <li>{{ r }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% if decision.rules_evaluated %}
+<h3>Rules Evaluated</h3>
+<table>
+  <thead><tr><th>Rule</th><th>Result</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for rule in decision.rules_evaluated %}
+    <tr>
+      <td>{{ rule.rule or "" }}</td>
+      <td>{{ rule.result or "" }}</td>
+      <td>{{ rule.detail or "" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endif %}
+
+{# ——— DTI ——— #}
+{% if dti %}
+<h2>DTI Analysis</h2>
+{% for label, key, threshold in [("Front-end DTI", "front_end_dti", 0.31), ("Back-end DTI", "back_end_dti", 0.43)] %}
+{% set val = dti.get(key) %}
+{% if val is not none %}
+<div class="dti-row">
+  <span class="dti-label">{{ label }}</span>
+  <div class="dti-bar-track">
+    <div class="dti-bar-fill {{ 'over' if val > threshold else 'ok' }}" style="width: {{ [val * 100, 100]|min }}%"></div>
+  </div>
+  <span class="dti-value">{{ "%.1f"|format(val * 100) }}%</span>
+</div>
+{% endif %}
+{% endfor %}
+<div class="fin-row"><span class="fin-label">Monthly Income</span><span class="fin-value">${{ "%.2f"|format(dti.monthly_income_total or 0) }}</span></div>
+<div class="fin-row"><span class="fin-label">Housing Payment (PITIA)</span><span class="fin-value">${{ "%.2f"|format(dti.housing_payment_used or 0) }}</span></div>
+<div class="fin-row"><span class="fin-label">Monthly Debt Total</span><span class="fin-value">${{ "%.2f"|format(dti.monthly_debt_total or 0) }}</span></div>
+{% endif %}
+
+{# ——— Income ——— #}
+{% if income %}
+<h2>Income Breakdown</h2>
+<div class="fin-row"><span class="fin-label">Total Monthly Income</span><span class="fin-value">${{ "%.2f"|format(income.monthly_income_total or 0) }}</span></div>
+<div class="fin-row"><span class="fin-label">Total Monthly Liabilities</span><span class="fin-value">${{ "%.2f"|format(income.monthly_liabilities_total or 0) }}</span></div>
+{% if income.borrowers %}
+<h3>Borrowers</h3>
+<table>
+  <thead><tr><th>Name</th><th>Role</th><th>Employer</th><th>Employment</th></tr></thead>
+  <tbody>
+  {% for b in income.borrowers %}
+    <tr>
+      <td>{{ b.name or "—" }}</td>
+      <td>{{ b.role or "—" }}</td>
+      <td>{{ b.employer or "—" }}</td>
+      <td>{{ b.employment_type or "—" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% if income.income_items %}
+<h3>Income Items</h3>
+<table>
+  <thead><tr><th>Source</th><th>Borrower</th><th>Amount</th><th>Frequency</th></tr></thead>
+  <tbody>
+  {% for item in income.income_items %}
+    <tr>
+      <td>{{ item.source or item.description or "—" }}</td>
+      <td>{{ item.borrower_name or "—" }}</td>
+      <td>{{ "$%.2f"|format(item.amount or 0) }}</td>
+      <td>{{ item.frequency or "—" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endif %}
+
+{# ——— Conditions ——— #}
+{% if conditions and conditions.conditions %}
+<h2>Underwriting Conditions ({{ conditions.conditions|length }})</h2>
+{% set by_category = {} %}
+{% for c in conditions.conditions %}
+  {% set cat = c.category or "Other" %}
+  {% if cat not in by_category %}{% set _ = by_category.update({cat: []}) %}{% endif %}
+  {% set _ = by_category[cat].append(c) %}
+{% endfor %}
+{% for cat, items in by_category.items() %}
+<div class="condition-group">
+  <div class="condition-group-title">{{ cat }} ({{ items|length }})</div>
+  {% for c in items %}
+  <div class="condition-item">
+    {{ c.description or "—" }}
+    {% set timing = c.timing or "Unknown" %}
+    {% set tcls = "timing-prior-docs" if "Docs" in timing else ("timing-prior-closing" if "Closing" in timing else "timing-post-closing") %}
+    <span class="timing-badge {{ tcls }}">{{ timing }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+{% endif %}
+
+{# ——— Document Inventory ——— #}
+{% if inventory and inventory.documents %}
+<h2>Document Inventory ({{ inventory.documents|length }} files)</h2>
+<table>
+  <thead><tr><th>File</th><th>Type</th><th>Pages</th></tr></thead>
+  <tbody>
+  {% for doc in inventory.documents %}
+    <tr>
+      <td>{{ doc.filename or doc.file_relpath or "—" }}</td>
+      <td>{{ doc.file_type or "—" }}</td>
+      <td>{{ doc.page_count or "—" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<div class="footer">
+  MortgageDocAI — Report generated {{ generated_at }} — Run {{ run_id }}
+</div>
+
+</body>
+</html>

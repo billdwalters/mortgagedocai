@@ -30,9 +30,10 @@ from typing import Any, List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from jinja2 import Environment, FileSystemLoader
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse
 from starlette.requests import Request
 from starlette.staticfiles import StaticFiles
 
@@ -1595,6 +1596,48 @@ def purge_orphans(tenant_id: str, body: PurgeRequestBody) -> dict[str, Any]:
         })
 
     return {"results": results, "deleted_count": deleted_count}
+
+
+# ---------------------------------------------------------------------------
+# Report generation (punch list #19)
+# ---------------------------------------------------------------------------
+_jinja_env = Environment(
+    loader=FileSystemLoader(str(REPO_ROOT / "webui")),
+    autoescape=True,
+)
+
+
+@app.get("/tenants/{tenant_id}/loans/{loan_id}/runs/{run_id}/report")
+def get_run_report(tenant_id: str, loan_id: str, run_id: str) -> HTMLResponse:
+    """Generate a printable HTML report for a run."""
+    if not _RUN_ID_PATTERN.match(run_id):
+        raise HTTPException(status_code=400, detail=f"Invalid run_id format: {run_id}")
+    profiles_dir = NAS_ANALYZE / "tenants" / tenant_id / "loans" / loan_id / run_id / "outputs" / "profiles"
+    if not profiles_dir.parent.parent.is_dir():
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+
+    decision = _read_json_safe(profiles_dir / "uw_decision" / "decision.json")
+    dti = _read_json_safe(profiles_dir / "income_analysis" / "dti.json")
+    income = _read_json_safe(profiles_dir / "income_analysis" / "income_analysis.json")
+    conditions = _read_json_safe(profiles_dir / "uw_conditions" / "conditions.json")
+    try:
+        inventory = _build_document_inventory(tenant_id, loan_id, run_id)
+    except Exception:
+        inventory = None
+
+    template = _jinja_env.get_template("report_template.html")
+    html = template.render(
+        tenant_id=tenant_id,
+        loan_id=loan_id,
+        run_id=run_id,
+        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        decision=decision,
+        dti=dti,
+        income=income,
+        conditions=conditions,
+        inventory=inventory,
+    )
+    return HTMLResponse(content=html)
 
 
 # ---------------------------------------------------------------------------

@@ -881,6 +881,23 @@
     return tmp.innerHTML;
   }
 
+  // ——— Export Report (punch list #19) ———
+  (function initExportReport() {
+    var btn = el("export-report-btn");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      if (!selectedLoanId || !selectedRunId) {
+        showInlineMsg("Select a loan with a completed run first.", "error");
+        return;
+      }
+      var tenant = getTenantId();
+      var url = getBaseUrl() + "/tenants/" + encodeURIComponent(tenant)
+        + "/loans/" + encodeURIComponent(selectedLoanId)
+        + "/runs/" + encodeURIComponent(selectedRunId) + "/report";
+      window.open(url, "_blank");
+    });
+  })();
+
   // ——— View Artifacts ———
   (function initViewArtifacts() {
     const btn = el("view-artifacts-btn");
