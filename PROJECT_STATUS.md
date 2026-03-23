@@ -1,6 +1,6 @@
 # MortgageDocAI — Project Status
 
-**Last Updated:** 2026-03-13
+**Last Updated:** 2026-03-23
 
 ## Current phase & AI context
 
@@ -18,11 +18,10 @@
 
 **Priority order:**
 1. Expand form fill templates (7 more worksheets) — extraction now supports borrower/employer fields.
-2. Web UI nice-to-have items (punch list #16–#23).
-3. Server migration prep (punch list #24).
-4. Extraction accuracy tuning post-GPU migration (punch list #25).
+2. Server migration prep (punch list #24).
+3. Extraction accuracy tuning post-GPU migration (punch list #25).
 
-**Completed (2026-03-13):** System-wide code audit (2 rounds, 40 fixes across 19 files). income_analysis v2, DTI hardening, UW decision v0.8, audit trail.
+**Completed (2026-03-23):** All Web UI punch list items (#1–#23) complete. System-wide code audit (2 rounds, 40 fixes across 19 files). income_analysis v2, DTI hardening, UW decision v0.8, audit trail.
 
 **Non-negotiables:** No cloud APIs. Do not rename folders/files. Preserve folder contracts (`nas_chunk/`, `nas_analyze/`, `outputs/`). Maintain `run_id` determinism. Preserve citation-integrity filtering. No change that breaks the regression smoke test.  
 
@@ -118,8 +117,8 @@ Pipeline steps:
 - Step12 auto-triggers Step13 if retrieval pack is missing
 - Re-runs for same `run_id` overwrite cleanly
 - **Loan API (FastAPI):** health, list tenants/loans/runs, **source-of-truth source_loans** (list + by loan_id), sync query, pipeline jobs, query jobs, artifacts index and artifact downloads, **form fill endpoints** (list templates + generate pre-filled .xlsx); optional API key and tenant allowlist (see Loan API section below)
-- **Web UI (/ui):** Refresh Loans from source-of-truth mount; loan list with Needs Processing / Up to date badges; Process Loan uses selected loan’s source_path; progress stepper shows live phase colors (streamed job stdout); **form fill dropdown** (select template + generate + download)
-- **Form Fill:** 3 Excel templates (Income Calc W2, FHA Max Mortgage, VA IRRRL Recoupment) pre-filled from pipeline data; 117 tests passing
+- **Web UI (/ui):** Refresh Loans from source-of-truth mount; loan list with Needs Processing / Up to date badges; Process Loan uses selected loan’s source_path; progress stepper shows live phase colors (streamed job stdout); **form fill dropdown** (select template + generate + download); **run history & comparison** (selector, side-by-side diff); **batch processing** (checkboxes, batch submit); **search/filter/sort** (by ID, status, date); **export report** (printable HTML); **queue depth badge**; **mobile responsive**; **keyboard navigation**; **light/dark mode toggle**
+- **Form Fill:** 3 Excel templates (Income Calc W2, FHA Max Mortgage, VA IRRRL Recoupment) pre-filled from pipeline data; 129 tests passing
 
 ---
 
@@ -1562,3 +1561,79 @@ TDD: 21 new tests in `test_step12_income_analysis.py`. 112 total tests passing (
 | `step12_analyze.py` | Multiple reasons in output: `DTI_FRONT_END_MAX` + `DTI_BACK_END_MAX` with individual PASS/FAIL status |
 | `step12_analyze.py` | Overall status: FAIL if any rule fails, PASS if all pass, UNKNOWN if back-end is null |
 | `step12_analyze.py` | Decision version: `v0.7-policy` → `v0.8-policy`; schema version: `uw_decision` v0.7 → v0.8 |
+
+---
+
+## Web UI — Nice-to-Have Punch List #16–#23 (2026-03-23)
+
+All 8 nice-to-have items completed in one session. 129 tests passing (119 main + 10 cleanup_orphans).
+
+### #16: Run History & Comparison
+
+| Component | What was built |
+|-----------|---------------|
+| `loan_api.py` | `_build_run_summary()`: extracts compact summary (decision, DTI, income, conditions) from a run's profile outputs |
+| `loan_api.py` | `_build_comparison_diff()`: field-by-field diff with numeric deltas between two run summaries |
+| `loan_api.py` | `_build_enriched_run_list()`: returns per-run metadata (status, profiles), newest first, with limit param |
+| `loan_api.py` | Enhanced `GET /runs` to return `runs` array alongside `run_ids` (backward compatible) |
+| `loan_api.py` | New `GET /runs/{run_id}/summary` endpoint |
+| `loan_api.py` | New `GET /runs/compare?run_a=...&run_b=...` endpoint |
+| `webui/app.js` | Run selector `<select>` dropdown: switching runs re-loads dashboard + chat profiles |
+| `webui/app.js` | Run history table with timestamps, status badges, profile pills, comparison checkboxes |
+| `webui/app.js` | Comparison panel: side-by-side columns (decision badge, DTI, income, conditions) + plain-language change summary |
+| `test_run_history.py` | 12 new tests: summary extraction, missing profiles, comparison diffs, enriched list, limit param |
+
+### #17: Batch Processing
+
+| Component | What was built |
+|-----------|---------------|
+| `loan_api.py` | `POST /tenants/{t}/batch/process`: accepts up to 50 loans per request, validates source paths, enqueues via JobService |
+| `webui/app.js` | Checkboxes on every loan in sidebar list |
+| `webui/app.js` | Batch action bar: Process Selected, Select Needing Processing (auto-checks `needs_reprocess` loans), Clear |
+| `webui/app.js` | Shows queued/skipped count feedback inline |
+
+### #18: Search and Filter Loans
+
+| Component | What was built |
+|-----------|---------------|
+| `webui/app.js` | `renderLoanList()`: re-renders loan list with current filter, search, and sort state |
+| `webui/app.js` | Search input filters by loan ID or folder name (case-insensitive substring) |
+| `webui/app.js` | Filter buttons: All / Needs Processing / Done |
+| `webui/app.js` | Sort dropdown: ID ascending/descending, newest/oldest by last_processed_utc |
+| `webui/index.html` | Search input, filter buttons, sort dropdown above loan list |
+
+### #19: Export / Report Generation
+
+| Component | What was built |
+|-----------|---------------|
+| `loan_api.py` | `GET /runs/{run_id}/report`: renders printable HTML report via Jinja2 |
+| `webui/report_template.html` | Self-contained HTML template: decision badge, DTI bars, income/borrower tables, conditions by category, document inventory, print-optimized CSS |
+| `webui/app.js` | Export Report button opens report in new browser tab |
+
+### #20: Job Queue Depth Indicator
+
+| Component | What was built |
+|-----------|---------------|
+| `webui/app.js` | Queue badge in header polls `GET /jobs` every 15s |
+| `webui/index.html` | `#queue-badge` element in header bar |
+| `webui/styles.css` | `.queue-badge` styling (accent pill, auto-hides when empty) |
+
+### #21: Mobile Responsiveness
+
+| Component | What was built |
+|-----------|---------------|
+| `webui/styles.css` | `@media (max-width: 700px)`: sidebar stacks above main as scrollable section, 44px min touch targets on all buttons, chat input/send stack vertically, main actions stack vertically, summary/comparison grids single-column, header compacts, run history table horizontal scroll |
+
+### #22: Keyboard Navigation
+
+| Component | What was built |
+|-----------|---------------|
+| `webui/styles.css` | `:focus-visible` outlines (accent color, 2px) on all interactive elements |
+| `webui/app.js` | Loan items get `tabindex=0`; keyboard handler on loan list: Arrow Up/Down navigates, Enter selects loan, Space toggles batch checkbox |
+
+### #23: Light Mode Toggle
+
+| Component | What was built |
+|-----------|---------------|
+| `webui/styles.css` | `body.light` class with CSS variable overrides (bg, surface, text, muted, borders, etc.) |
+| `webui/app.js` | Theme toggle button in header (sun/moon icon); preference persisted in `localStorage` as `mdai_theme`; applies on page load |

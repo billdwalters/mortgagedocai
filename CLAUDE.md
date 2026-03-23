@@ -150,7 +150,7 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 **Form Fill:**
 - `formfill.py` — Form registry (`FORM_TEMPLATES`), `FieldMapping`/`FormTemplate` dataclasses, `fill_form()` filler logic (openpyxl)
 
-**Tests (117 passing as of 2026-03-13: 107 main + 10 cleanup_orphans):**
+**Tests (129 passing as of 2026-03-23: 119 main + 10 cleanup_orphans):**
 - `test_formfill.py` — Form registry, JSON path resolution, filler logic (19 tests)
 - `test_job_hardening.py` — Job workflow resilience (10 tests)
 - `test_source_path_validation.py` — Source path validation (5 tests)
@@ -166,9 +166,21 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 
 ---
 
-## Recently Completed Work (as of 2026-03-13)
+## Recently Completed Work (as of 2026-03-23)
 
 All TDD (red → green → regression). 129 tests passing (119 main + 10 cleanup_orphans).
+
+### Web UI Nice-to-Have Items #16–#23 (2026-03-23)
+| Item | What was built |
+|------|---------------|
+| #16 Run history & comparison | Enhanced `GET /runs` with per-run metadata; `GET /runs/{run_id}/summary` and `GET /runs/compare` endpoints; run selector dropdown, history table with comparison checkboxes, side-by-side comparison panel with change deltas. 12 new tests in `test_run_history.py` |
+| #17 Batch processing | `POST /tenants/{t}/batch/process` accepts up to 50 loans, validates source paths, enqueues via JobService; checkboxes on loan list, batch action bar (Process Selected, Select Needing Processing, Clear) |
+| #18 Search and filter loans | Client-side search input (loan ID / folder name), filter buttons (All / Needs Processing / Done), sort dropdown (ID asc/desc, newest/oldest) |
+| #19 Export / report generation | `GET /runs/{run_id}/report` renders printable HTML via Jinja2 template (decision, DTI, income, conditions, inventory); print-optimized CSS; Export Report button opens in new tab |
+| #20 Job queue depth indicator | Queue badge in header polls `GET /jobs` every 15s; shows PENDING/RUNNING/CLAIMED count; auto-hides when empty |
+| #21 Mobile responsiveness | `@media (max-width: 700px)` styles: sidebar stacks above main, 44px touch targets, chat/actions stack vertically, summary/comparison single-column |
+| #22 Keyboard navigation | `:focus-visible` outlines; loan list items focusable (tabindex=0); Arrow Up/Down, Enter to select, Space for batch checkbox |
+| #23 Light mode toggle | `body.light` CSS variable overrides; toggle button in header (sun/moon); localStorage persistence |
 
 ### System-Wide Code Audit — Round 1 + Round 2 (2026-03-13)
 | Severity | Count | Key Fixes |
@@ -289,11 +301,11 @@ All TDD (red → green → regression). 129 tests passing (119 main + 10 cleanup
 ## What's Next (Priority Order)
 
 1. **More form templates** — Add remaining 7 worksheets to `FORM_TEMPLATES` registry (extraction profiles now support borrower/employer fields).
-2. **Web UI nice-to-have items** — Punch list #16–#23 (run history, batch, search, export, queue depth, mobile, keyboard, light mode).
-3. **Server migration** — Punch list #24 (bootstrap on new GPU server).
-4. **Extraction accuracy tuning** — Punch list #25 (batch-process diverse loans, tune prompts post-GPU migration).
+2. **Server migration** — Punch list #24 (bootstrap on new GPU server).
+3. **Extraction accuracy tuning** — Punch list #25 (batch-process diverse loans, tune prompts post-GPU migration).
 
-**Completed (2026-03-10):**
+**Completed (2026-03-23):**
+- ~~Web UI nice-to-have items~~ — All 8 items (#16–#23) complete: run history, batch, search, export, queue depth, mobile, keyboard, light mode
 - ~~`income_analysis` improvements~~ — Borrowers, employer, biweekly/weekly frequencies (v2 schema)
 - ~~DTI engine hardening~~ — Biweekly/weekly conversion, `_PROGRAM_THRESHOLDS` (FHA/VA/USDA/Conventional)
 - ~~UW decision v0.8~~ — Front-end DTI enforcement, program-specific thresholds, multiple reasons
