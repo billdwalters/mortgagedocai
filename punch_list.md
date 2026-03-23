@@ -86,8 +86,9 @@ Added search input (filters by loan ID or folder name), filter buttons (All / Ne
 ~~Generate a clean summary PDF or printable report from the analysis outputs.~~
 Added `GET /tenants/{t}/loans/{l}/runs/{r}/report` endpoint that renders a printable HTML report via Jinja2 template. Report includes: UW decision with badge, DTI analysis with bar charts, income breakdown with borrowers and items table, conditions grouped by category with timing badges, and document inventory. Print-optimized CSS with page breaks. "Export Report" button in main actions opens report in new tab. Users can Print to PDF (Ctrl+P) for clean PDF output.
 
-### 20. Job queue depth indicator
-Show how many jobs are queued when multiple are submitted.
+### ~~20. Job queue depth indicator~~ DONE (2026-03-23)
+~~Show how many jobs are queued when multiple are submitted.~~
+Added queue depth badge in header bar that polls `GET /jobs` every 15 seconds. Shows "N jobs queued" count for PENDING/RUNNING/CLAIMED jobs. Badge auto-hides when queue is empty.
 
 ### 21. Mobile responsiveness
 Layout breaks on small screens; touch targets too small (should be 44x44px minimum). Chat input row wraps awkwardly on narrow viewports.

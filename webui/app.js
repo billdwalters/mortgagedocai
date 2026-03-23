@@ -881,6 +881,40 @@
     return tmp.innerHTML;
   }
 
+  // ——— Job Queue Depth Indicator (punch list #20) ———
+  (function initQueueDepth() {
+    var badge = el("queue-badge");
+    if (!badge) return;
+    var POLL_INTERVAL = 15000;
+    var _queueTimer = null;
+
+    async function pollQueue() {
+      try {
+        var data = await apiJson("/jobs?limit=100");
+        var jobs = data.jobs || [];
+        var active = jobs.filter(function (j) {
+          return j.status === "PENDING" || j.status === "RUNNING" || j.status === "CLAIMED";
+        });
+        if (active.length > 0) {
+          badge.textContent = active.length + " job" + (active.length !== 1 ? "s" : "") + " queued";
+          badge.hidden = false;
+        } else {
+          badge.hidden = true;
+        }
+      } catch (e) {
+        badge.hidden = true;
+      }
+    }
+
+    function startQueuePolling() {
+      pollQueue();
+      if (_queueTimer) clearInterval(_queueTimer);
+      _queueTimer = setInterval(pollQueue, POLL_INTERVAL);
+    }
+
+    startQueuePolling();
+  })();
+
   // ——— Export Report (punch list #19) ———
   (function initExportReport() {
     var btn = el("export-report-btn");
