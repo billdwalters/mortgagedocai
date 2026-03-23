@@ -98,8 +98,9 @@ Added comprehensive `@media (max-width: 700px)` styles: sidebar becomes scrollab
 ~~Can't arrow through the loan list; no visible focus indicators on buttons or interactive elements.~~
 Added `:focus-visible` outlines on all interactive elements (accent color, 2px). Loan list items are focusable (`tabindex=0`). Arrow Up/Down navigates loan list, Enter selects loan, Space toggles batch checkbox. Keyboard handler on loan list container.
 
-### 23. Light mode toggle
-UI is dark-only. Some users may prefer a light theme.
+### ~~23. Light mode toggle~~ DONE (2026-03-23)
+~~UI is dark-only. Some users may prefer a light theme.~~
+Added `body.light` CSS class with overridden CSS variables (bg, surface, text, muted, borders). Theme toggle button in header (sun/moon icon). Preference persisted in `localStorage` as `mdai_theme`. Applies on page load before render.
 
 ---
 

@@ -920,6 +920,26 @@
     return tmp.innerHTML;
   }
 
+  // ——— Light/Dark Theme Toggle (punch list #23) ———
+  (function initThemeToggle() {
+    var btn = el("theme-toggle");
+    if (!btn) return;
+    var stored = localStorage.getItem("mdai_theme");
+    if (stored === "light") document.body.classList.add("light");
+
+    function updateLabel() {
+      btn.textContent = document.body.classList.contains("light") ? "\u263E" : "\u2606";
+      btn.title = document.body.classList.contains("light") ? "Switch to dark mode" : "Switch to light mode";
+    }
+    updateLabel();
+
+    btn.addEventListener("click", function () {
+      document.body.classList.toggle("light");
+      localStorage.setItem("mdai_theme", document.body.classList.contains("light") ? "light" : "dark");
+      updateLabel();
+    });
+  })();
+
   // ——— Job Queue Depth Indicator (punch list #20) ———
   (function initQueueDepth() {
     var badge = el("queue-badge");

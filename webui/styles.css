@@ -13,6 +13,47 @@
   --border: rgba(255, 255, 255, 0.1);
 }
 
+/* Light mode overrides (punch list #23) */
+body.light {
+  --bg: #f5f5f5;
+  --bg-alt: #eee;
+  --surface: #fff;
+  --text: #1a1a1e;
+  --muted: #555;
+  --accent: #7c3aed;
+  --success: #16a34a;
+  --error: #dc2626;
+  --warn: #ca8a04;
+  --border: rgba(0, 0, 0, 0.12);
+}
+body.light .header {
+  border-bottom-color: rgba(0,0,0,0.08);
+}
+body.light .sidebar {
+  border-right-color: rgba(0,0,0,0.08);
+}
+body.light .section {
+  border-color: rgba(0,0,0,0.08);
+}
+body.light .summary-card {
+  border-color: rgba(0,0,0,0.1);
+}
+body.light .scroll-box {
+  background: #f0f0f0;
+}
+body.light .loan-item:hover {
+  background: rgba(0,0,0,0.04);
+}
+body.light .loan-item.selected {
+  background: rgba(124, 58, 237, 0.1);
+}
+body.light .btn-icon {
+  border-color: rgba(0,0,0,0.15);
+}
+body.light .btn-icon:hover {
+  background: rgba(0,0,0,0.04);
+}
+
 * {
   box-sizing: border-box;
 }
