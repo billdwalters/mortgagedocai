@@ -405,6 +405,7 @@
       var li = document.createElement("li");
       li.className = "loan-item";
       li.dataset.loanId = it.loan_id;
+      li.tabIndex = 0;
       if (it.loan_id === selectedLoanId) li.classList.add("selected");
       var lastText = (it.last_processed_utc != null && it.last_processed_utc !== "") ? formatTimestamp(it.last_processed_utc) : "Never";
       var badge = it.needs_reprocess ? "Needs Processing" : "Up to date";
@@ -468,6 +469,44 @@
         btn.classList.add("active");
         renderLoanList();
       });
+    });
+  })();
+
+  // ——— Keyboard Navigation (punch list #22) ———
+  (function initKeyboardNav() {
+    var listEl = el("loan-list");
+    if (!listEl) return;
+
+    listEl.addEventListener("keydown", function (e) {
+      var items = listEl.querySelectorAll(".loan-item[tabindex]");
+      if (items.length === 0) return;
+      var focused = document.activeElement;
+      var idx = Array.prototype.indexOf.call(items, focused);
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        var next = idx < items.length - 1 ? idx + 1 : 0;
+        items[next].focus();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        var prev = idx > 0 ? idx - 1 : items.length - 1;
+        items[prev].focus();
+      } else if (e.key === "Enter" && idx >= 0) {
+        e.preventDefault();
+        var loanId = items[idx].dataset.loanId;
+        if (loanId) {
+          selectLoan(loanId);
+          document.querySelectorAll(".loan-item").forEach(function (n) { n.classList.remove("selected"); });
+          items[idx].classList.add("selected");
+        }
+      } else if (e.key === " " && idx >= 0) {
+        e.preventDefault();
+        var cb = items[idx].querySelector(".batch-cb");
+        if (cb) {
+          cb.checked = !cb.checked;
+          if (window._updateBatchBar) window._updateBatchBar();
+        }
+      }
     });
   })();
 

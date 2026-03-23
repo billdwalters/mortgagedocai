@@ -1190,6 +1190,26 @@ body {
   min-width: 0;
 }
 
+/* ——— Keyboard Navigation (punch list #22) ——— */
+/* Visible focus indicators */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.loan-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: rgba(124, 58, 237, 0.12);
+}
+.loan-item.focused {
+  background: rgba(124, 58, 237, 0.12);
+  border-color: var(--accent);
+}
+button:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* ——— Mobile Responsiveness (punch list #21) ——— */
 @media (max-width: 700px) {
   /* Sidebar becomes top section on mobile */

@@ -94,8 +94,9 @@ Added queue depth badge in header bar that polls `GET /jobs` every 15 seconds. S
 ~~Layout breaks on small screens; touch targets too small (should be 44x44px minimum). Chat input row wraps awkwardly on narrow viewports.~~
 Added comprehensive `@media (max-width: 700px)` styles: sidebar becomes scrollable top section, 44px minimum touch targets on all buttons, chat input/send stack vertically, main actions stack vertically, summary/comparison grids go single-column, header compacts, run history table scrolls horizontally. Viewport meta already present.
 
-### 22. Keyboard navigation
-Can't arrow through the loan list; no visible focus indicators on buttons or interactive elements.
+### ~~22. Keyboard navigation~~ DONE (2026-03-23)
+~~Can't arrow through the loan list; no visible focus indicators on buttons or interactive elements.~~
+Added `:focus-visible` outlines on all interactive elements (accent color, 2px). Loan list items are focusable (`tabindex=0`). Arrow Up/Down navigates loan list, Enter selects loan, Space toggles batch checkbox. Keyboard handler on loan list container.
 
 ### 23. Light mode toggle
 UI is dark-only. Some users may prefer a light theme.
