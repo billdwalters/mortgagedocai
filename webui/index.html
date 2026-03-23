@@ -40,6 +40,18 @@
       <section class="sidebar-section">
         <button type="button" id="refresh-loans" class="btn-primary">Refresh Loans</button>
         <button type="button" id="housekeeping-btn" class="btn-secondary" style="margin-top:0.5rem;width:100%">Housekeeping</button>
+        <input type="text" id="loan-search" class="loan-search" placeholder="Search loans...">
+        <div class="loan-filter-row">
+          <button type="button" class="loan-filter-btn active" data-filter="all">All</button>
+          <button type="button" class="loan-filter-btn" data-filter="needs">Needs</button>
+          <button type="button" class="loan-filter-btn" data-filter="done">Done</button>
+          <select id="loan-sort" class="loan-sort">
+            <option value="id-asc">ID &uarr;</option>
+            <option value="id-desc">ID &darr;</option>
+            <option value="date-desc">Newest</option>
+            <option value="date-asc">Oldest</option>
+          </select>
+        </div>
         <ul id="loan-list" class="loan-list"></ul>
         <div id="batch-bar" class="batch-bar" hidden>
           <div class="batch-bar-info"><span id="batch-selected-count">0</span> selected</div>

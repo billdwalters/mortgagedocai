@@ -317,6 +317,10 @@
   /** After refresh: loan_id -> source_loans item (source_path, last_processed_utc, etc.) */
   let sourceLoanItemsByLoanId = {};
   let refreshLoansInFlight = false;
+  let _allLoanItems = [];
+  let _loanFilter = "all";     // "all", "needs", "done"
+  let _loanSort = "id-asc";    // "id-asc", "id-desc", "date-desc", "date-asc"
+  let _loanSearchTerm = "";
 
   // ——— Loans list (source-of-truth from GET /tenants/{tenant}/source_loans) ———
   async function refreshLoans() {
@@ -339,43 +343,12 @@
     try {
       const data = await apiJson("/tenants/" + encodeURIComponent(getTenantId()) + "/source_loans");
       const items = (data && Array.isArray(data.items)) ? data.items : [];
+      _allLoanItems = items;
+      sourceLoanItemsByLoanId = {};
       for (let i = 0; i < items.length; i++) {
-        const it = items[i];
-        sourceLoanItemsByLoanId[it.loan_id] = it;
-        const li = document.createElement("li");
-        li.className = "loan-item";
-        li.dataset.loanId = it.loan_id;
-        const lastText = (it.last_processed_utc != null && it.last_processed_utc !== "") ? formatTimestamp(it.last_processed_utc) : "Never";
-        const badge = it.needs_reprocess ? "Needs Processing" : "Up to date";
-        const badgeClass = it.needs_reprocess ? "loan-badge needs-processing" : "loan-badge up-to-date";
-        li.innerHTML =
-          "<div class=\"loan-item-row\">" +
-          "<input type=\"checkbox\" class=\"batch-cb\" data-loan-id=\"" + escapeHtml(it.loan_id) + "\">" +
-          "<div class=\"loan-item-content\">" +
-          "<span class=\"loan-id\">" + escapeHtml(it.loan_id) + "</span>" +
-          "<span class=\"loan-folder-name small\">" + escapeHtml(it.folder_name || "") + "</span>" +
-          "<span class=\"loan-meta small\">Source: " + escapeHtml(formatTimestamp(it.source_last_modified_utc || "")) + "</span>" +
-          "<span class=\"loan-meta small\">Processed: " + escapeHtml(lastText) + "</span>" +
-          "<span class=\"" + badgeClass + "\">" + escapeHtml(badge) + "</span>" +
-          "</div></div>";
-        var contentArea = li.querySelector(".loan-item-content");
-        if (contentArea) contentArea.addEventListener("click", function () {
-          selectLoan(it.loan_id);
-          document.querySelectorAll(".loan-item").forEach(function (n) { n.classList.remove("selected"); });
-          li.classList.add("selected");
-        });
-        var cb = li.querySelector(".batch-cb");
-        if (cb) cb.addEventListener("change", function () {
-          if (window._updateBatchBar) window._updateBatchBar();
-        });
-        listEl.appendChild(li);
+        sourceLoanItemsByLoanId[items[i].loan_id] = items[i];
       }
-      if (items.length === 0) {
-        const li = document.createElement("li");
-        li.className = "loan-item muted";
-        li.textContent = "No source loans found.";
-        listEl.appendChild(li);
-      }
+      renderLoanList();
     } catch (e) {
       const li = document.createElement("li");
       li.className = "loan-item error";
@@ -396,6 +369,107 @@
       btn.textContent = _jobActive ? "Processing…" : "Process Loan";
     }
   }
+
+  function renderLoanList() {
+    var listEl = el("loan-list");
+    if (!listEl) return;
+    listEl.innerHTML = "";
+
+    // Filter
+    var filtered = _allLoanItems.filter(function (it) {
+      if (_loanFilter === "needs") return it.needs_reprocess;
+      if (_loanFilter === "done") return !it.needs_reprocess;
+      return true;
+    });
+
+    // Search
+    if (_loanSearchTerm) {
+      var term = _loanSearchTerm.toLowerCase();
+      filtered = filtered.filter(function (it) {
+        return (it.loan_id && it.loan_id.toLowerCase().indexOf(term) !== -1) ||
+               (it.folder_name && it.folder_name.toLowerCase().indexOf(term) !== -1);
+      });
+    }
+
+    // Sort
+    filtered.sort(function (a, b) {
+      if (_loanSort === "id-asc") return (a.loan_id || "").localeCompare(b.loan_id || "", undefined, { numeric: true });
+      if (_loanSort === "id-desc") return (b.loan_id || "").localeCompare(a.loan_id || "", undefined, { numeric: true });
+      if (_loanSort === "date-desc") return (b.last_processed_utc || "").localeCompare(a.last_processed_utc || "");
+      if (_loanSort === "date-asc") return (a.last_processed_utc || "").localeCompare(b.last_processed_utc || "");
+      return 0;
+    });
+
+    for (var i = 0; i < filtered.length; i++) {
+      var it = filtered[i];
+      var li = document.createElement("li");
+      li.className = "loan-item";
+      li.dataset.loanId = it.loan_id;
+      if (it.loan_id === selectedLoanId) li.classList.add("selected");
+      var lastText = (it.last_processed_utc != null && it.last_processed_utc !== "") ? formatTimestamp(it.last_processed_utc) : "Never";
+      var badge = it.needs_reprocess ? "Needs Processing" : "Up to date";
+      var badgeClass = it.needs_reprocess ? "loan-badge needs-processing" : "loan-badge up-to-date";
+      li.innerHTML =
+        "<div class=\"loan-item-row\">" +
+        "<input type=\"checkbox\" class=\"batch-cb\" data-loan-id=\"" + escapeHtml(it.loan_id) + "\">" +
+        "<div class=\"loan-item-content\">" +
+        "<span class=\"loan-id\">" + escapeHtml(it.loan_id) + "</span>" +
+        "<span class=\"loan-folder-name small\">" + escapeHtml(it.folder_name || "") + "</span>" +
+        "<span class=\"loan-meta small\">Source: " + escapeHtml(formatTimestamp(it.source_last_modified_utc || "")) + "</span>" +
+        "<span class=\"loan-meta small\">Processed: " + escapeHtml(lastText) + "</span>" +
+        "<span class=\"" + badgeClass + "\">" + escapeHtml(badge) + "</span>" +
+        "</div></div>";
+      (function (loanId) {
+        var contentArea = li.querySelector(".loan-item-content");
+        if (contentArea) contentArea.addEventListener("click", function () {
+          selectLoan(loanId);
+          document.querySelectorAll(".loan-item").forEach(function (n) { n.classList.remove("selected"); });
+          li.classList.add("selected");
+        });
+      })(it.loan_id);
+      var cb = li.querySelector(".batch-cb");
+      if (cb) cb.addEventListener("change", function () {
+        if (window._updateBatchBar) window._updateBatchBar();
+      });
+      listEl.appendChild(li);
+    }
+    if (filtered.length === 0) {
+      var li2 = document.createElement("li");
+      li2.className = "loan-item muted";
+      li2.textContent = _allLoanItems.length === 0 ? "No source loans found." : "No loans match filter.";
+      listEl.appendChild(li2);
+    }
+    if (window._updateBatchBar) window._updateBatchBar();
+  }
+
+  // ——— Search, filter, sort controls ———
+  (function initLoanControls() {
+    var searchInput = el("loan-search");
+    var sortSelect = el("loan-sort");
+
+    if (searchInput) {
+      searchInput.addEventListener("input", function () {
+        _loanSearchTerm = searchInput.value.trim();
+        renderLoanList();
+      });
+    }
+
+    if (sortSelect) {
+      sortSelect.addEventListener("change", function () {
+        _loanSort = sortSelect.value;
+        renderLoanList();
+      });
+    }
+
+    document.querySelectorAll(".loan-filter-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        _loanFilter = btn.dataset.filter || "all";
+        document.querySelectorAll(".loan-filter-btn").forEach(function (b) { b.classList.remove("active"); });
+        btn.classList.add("active");
+        renderLoanList();
+      });
+    });
+  })();
 
   function escapeHtml(s) {
     const div = document.createElement("div");

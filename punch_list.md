@@ -78,8 +78,9 @@ Enhanced `GET /runs` endpoint to return per-run metadata (status, profiles). Add
 ~~Queue multiple loans for processing at once instead of one at a time.~~
 Added `POST /tenants/{tenant_id}/batch/process` endpoint accepting up to 50 loans per request, validates source paths and enqueues jobs via existing JobService. UI: checkboxes on every loan in sidebar, batch action bar with "Process Selected", "Select Needing Processing" (auto-checks `needs_reprocess` loans), and "Clear" buttons. Shows queued/skipped count feedback. Uses existing advanced settings (offline_embeddings, top_k, etc.).
 
-### 18. Search and filter loans
-Loan list is flat and unsorted. Add search by loan ID, sort by status/date, or filter by needs-processing.
+### ~~18. Search and filter loans~~ DONE (2026-03-23)
+~~Loan list is flat and unsorted. Add search by loan ID, sort by status/date, or filter by needs-processing.~~
+Added search input (filters by loan ID or folder name), filter buttons (All / Needs Processing / Done), and sort dropdown (ID asc/desc, newest/oldest). All client-side filtering on already-loaded data. Loan list re-renders on search/filter/sort change, preserving selected state and batch checkboxes.
 
 ### 19. Export / report generation
 Generate a clean summary PDF or printable report from the analysis outputs.
