@@ -74,8 +74,9 @@ Added `formatTimestamp()` utility that parses both run_id style (`2026-02-26T060
 ~~Show all runs for a loan, not just the latest. Allow comparing outputs between runs to see what changed.~~
 Enhanced `GET /runs` endpoint to return per-run metadata (status, profiles). Added `GET /runs/{run_id}/summary` (compact key outputs) and `GET /runs/compare?run_a=...&run_b=...` (side-by-side diff with deltas). UI: run selector dropdown to switch between runs, expandable run history table with checkboxes, side-by-side comparison panel showing decision/DTI/income/conditions changes with plain-language summary. 12 new tests in `test_run_history.py`.
 
-### 17. Batch processing
-Queue multiple loans for processing at once instead of one at a time.
+### ~~17. Batch processing~~ DONE (2026-03-23)
+~~Queue multiple loans for processing at once instead of one at a time.~~
+Added `POST /tenants/{tenant_id}/batch/process` endpoint accepting up to 50 loans per request, validates source paths and enqueues jobs via existing JobService. UI: checkboxes on every loan in sidebar, batch action bar with "Process Selected", "Select Needing Processing" (auto-checks `needs_reprocess` loans), and "Clear" buttons. Shows queued/skipped count feedback. Uses existing advanced settings (offline_embeddings, top_k, etc.).
 
 ### 18. Search and filter loans
 Loan list is flat and unsorted. Add search by loan ID, sort by status/date, or filter by needs-processing.

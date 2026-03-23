@@ -349,15 +349,24 @@
         const badge = it.needs_reprocess ? "Needs Processing" : "Up to date";
         const badgeClass = it.needs_reprocess ? "loan-badge needs-processing" : "loan-badge up-to-date";
         li.innerHTML =
+          "<div class=\"loan-item-row\">" +
+          "<input type=\"checkbox\" class=\"batch-cb\" data-loan-id=\"" + escapeHtml(it.loan_id) + "\">" +
+          "<div class=\"loan-item-content\">" +
           "<span class=\"loan-id\">" + escapeHtml(it.loan_id) + "</span>" +
           "<span class=\"loan-folder-name small\">" + escapeHtml(it.folder_name || "") + "</span>" +
           "<span class=\"loan-meta small\">Source: " + escapeHtml(formatTimestamp(it.source_last_modified_utc || "")) + "</span>" +
           "<span class=\"loan-meta small\">Processed: " + escapeHtml(lastText) + "</span>" +
-          "<span class=\"" + badgeClass + "\">" + escapeHtml(badge) + "</span>";
-        li.addEventListener("click", function () {
+          "<span class=\"" + badgeClass + "\">" + escapeHtml(badge) + "</span>" +
+          "</div></div>";
+        var contentArea = li.querySelector(".loan-item-content");
+        if (contentArea) contentArea.addEventListener("click", function () {
           selectLoan(it.loan_id);
           document.querySelectorAll(".loan-item").forEach(function (n) { n.classList.remove("selected"); });
           li.classList.add("selected");
+        });
+        var cb = li.querySelector(".batch-cb");
+        if (cb) cb.addEventListener("change", function () {
+          if (window._updateBatchBar) window._updateBatchBar();
         });
         listEl.appendChild(li);
       }
@@ -2023,6 +2032,116 @@
     if (closeComparisonBtn) {
       closeComparisonBtn.addEventListener("click", function () {
         if (comparisonPanel) comparisonPanel.hidden = true;
+      });
+    }
+  })();
+
+  // ——— Batch Processing (punch list #17) ———
+  (function initBatch() {
+    var batchBar = el("batch-bar");
+    var batchCount = el("batch-selected-count");
+    var processBtn = el("batch-process-btn");
+    var selectNeedsBtn = el("batch-select-needs");
+    var clearBtn = el("batch-clear");
+    var batchMsg = el("batch-msg");
+    if (!batchBar) return;
+
+    // Show batch bar after loans load
+    batchBar.hidden = false;
+
+    function getChecked() {
+      return document.querySelectorAll(".batch-cb:checked");
+    }
+
+    function updateBatchBar() {
+      var count = getChecked().length;
+      if (batchCount) batchCount.textContent = String(count);
+      if (processBtn) processBtn.disabled = count === 0;
+    }
+    window._updateBatchBar = updateBatchBar;
+
+    function showBatchMsg(msg, type) {
+      if (!batchMsg) return;
+      batchMsg.textContent = msg;
+      batchMsg.className = "source-validation-msg" + (type === "error" ? " source-validation-error" : type === "ok" ? " source-validation-ok" : " source-validation-warn");
+      batchMsg.hidden = false;
+      if (type === "ok") setTimeout(function () { batchMsg.hidden = true; }, 10000);
+    }
+
+    if (selectNeedsBtn) {
+      selectNeedsBtn.addEventListener("click", function () {
+        document.querySelectorAll(".batch-cb").forEach(function (cb) {
+          var loanId = cb.dataset.loanId;
+          var item = sourceLoanItemsByLoanId[loanId];
+          cb.checked = !!(item && item.needs_reprocess);
+        });
+        updateBatchBar();
+      });
+    }
+
+    if (clearBtn) {
+      clearBtn.addEventListener("click", function () {
+        document.querySelectorAll(".batch-cb").forEach(function (cb) { cb.checked = false; });
+        updateBatchBar();
+        if (batchMsg) batchMsg.hidden = true;
+      });
+    }
+
+    if (processBtn) {
+      processBtn.addEventListener("click", async function () {
+        var checked = getChecked();
+        if (checked.length === 0) return;
+        var loans = [];
+        checked.forEach(function (cb) {
+          var loanId = cb.dataset.loanId;
+          var item = sourceLoanItemsByLoanId[loanId];
+          if (item && item.source_path) {
+            loans.push({ loan_id: loanId, source_path: item.source_path });
+          }
+        });
+        if (loans.length === 0) {
+          showBatchMsg("No valid source paths for selected loans.", "error");
+          return;
+        }
+        processBtn.disabled = true;
+        processBtn.textContent = "Submitting...";
+        try {
+          var tenant = getTenantId();
+          // Read advanced settings
+          var body = { loans: loans };
+          var adv = el("adv-offline-embeddings");
+          if (adv) body.offline_embeddings = adv.checked;
+          var topK = el("adv-top-k");
+          if (topK && topK.value) body.top_k = parseInt(topK.value, 10) || 80;
+          var maxPf = el("adv-max-per-file");
+          if (maxPf && maxPf.value) body.max_per_file = parseInt(maxPf.value, 10) || 12;
+          var maxDrop = el("adv-max-dropped-chunks");
+          if (maxDrop && maxDrop.value) body.max_dropped_chunks = parseInt(maxDrop.value, 10) || 5;
+          var rpStable = el("adv-expect-rp-hash-stable");
+          if (rpStable) body.expect_rp_hash_stable = rpStable.checked;
+          var smoke = el("adv-smoke-debug");
+          if (smoke) body.smoke_debug = smoke.checked;
+
+          var data = await apiJson("/tenants/" + encodeURIComponent(tenant) + "/batch/process", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          var queued = data.queued || 0;
+          var total = data.total || 0;
+          var skipped = total - queued;
+          var msg = queued + " of " + total + " jobs queued.";
+          if (skipped > 0) msg += " " + skipped + " skipped.";
+          showBatchMsg(msg, queued > 0 ? "ok" : "warn");
+          // Clear checkboxes
+          document.querySelectorAll(".batch-cb").forEach(function (cb) { cb.checked = false; });
+          updateBatchBar();
+        } catch (err) {
+          showBatchMsg("Batch error: " + (err.message || err), "error");
+        } finally {
+          processBtn.disabled = false;
+          processBtn.textContent = "Process Selected";
+        }
       });
     }
   })();

@@ -1099,3 +1099,41 @@ body {
 .comparison-summary li {
   margin: 0.15rem 0;
 }
+
+/* ——— Batch Processing Bar ——— */
+.batch-bar {
+  margin-top: 0.75rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.batch-bar-info {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  width: 100%;
+}
+.batch-btn {
+  font-size: 0.8125rem;
+  padding: 0.4rem 0.75rem;
+}
+.batch-link {
+  font-size: 0.75rem;
+  margin-left: 0;
+}
+.loan-item-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.loan-item-row input[type="checkbox"] {
+  margin-top: 0.3rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.loan-item-content {
+  flex: 1;
+  min-width: 0;
+}

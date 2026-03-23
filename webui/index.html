@@ -41,6 +41,13 @@
         <button type="button" id="refresh-loans" class="btn-primary">Refresh Loans</button>
         <button type="button" id="housekeeping-btn" class="btn-secondary" style="margin-top:0.5rem;width:100%">Housekeeping</button>
         <ul id="loan-list" class="loan-list"></ul>
+        <div id="batch-bar" class="batch-bar" hidden>
+          <div class="batch-bar-info"><span id="batch-selected-count">0</span> selected</div>
+          <button type="button" id="batch-process-btn" class="btn-cta batch-btn" disabled>Process Selected</button>
+          <button type="button" id="batch-select-needs" class="btn-link batch-link">Select Needing Processing</button>
+          <button type="button" id="batch-clear" class="btn-link batch-link">Clear</button>
+          <p id="batch-msg" class="source-validation-msg" hidden></p>
+        </div>
       </section>
     </aside>
 

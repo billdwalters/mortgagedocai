@@ -636,6 +636,22 @@ class StartRunRequest(BaseModel):
     smoke_debug: bool = False
 
 
+class BatchLoanEntry(BaseModel):
+    loan_id: str
+    source_path: str
+
+
+class BatchProcessRequest(BaseModel):
+    """Body for POST /tenants/{tenant_id}/batch/process."""
+    loans: List[BatchLoanEntry] = Field(..., max_length=50)
+    offline_embeddings: bool = True
+    top_k: int = 80
+    max_per_file: int = 12
+    max_dropped_chunks: int = 5
+    expect_rp_hash_stable: bool = True
+    smoke_debug: bool = False
+
+
 class SubmitJobBody(BaseModel):
     run_id: str | None = None
     skip_intake: bool = False
@@ -1010,6 +1026,53 @@ def start_run(tenant_id: str, loan_id: str, body: StartRunBody) -> dict[str, Any
         "run_id": body.run_id,
         "status": "STARTED",
     }
+
+
+@app.post("/tenants/{tenant_id}/batch/process", status_code=202)
+def batch_process(tenant_id: str, body: BatchProcessRequest) -> dict[str, Any]:
+    """Submit processing jobs for multiple loans at once."""
+    results: list[dict[str, Any]] = []
+    for entry in body.loans:
+        loan_id = entry.loan_id
+        source_path = (entry.source_path or "").strip()
+        if not source_path:
+            results.append({"loan_id": loan_id, "status": "SKIPPED", "reason": "empty source_path"})
+            continue
+        try:
+            sp = Path(source_path).resolve()
+            if not sp.is_relative_to(SOURCE_LOANS_ROOT.resolve()):
+                results.append({"loan_id": loan_id, "status": "SKIPPED", "reason": "source_path outside root"})
+                continue
+        except (ValueError, OSError):
+            results.append({"loan_id": loan_id, "status": "SKIPPED", "reason": "invalid source_path"})
+            continue
+        run_id = _utc_run_id()
+        request = {
+            "run_id": run_id,
+            "skip_intake": False,
+            "skip_process": False,
+            "source_path": source_path,
+            "run_llm": False,
+            "offline_embeddings": body.offline_embeddings,
+            "top_k": body.top_k,
+            "max_per_file": body.max_per_file,
+            "max_dropped_chunks": body.max_dropped_chunks,
+            "expect_rp_hash_stable": body.expect_rp_hash_stable,
+            "smoke_debug": body.smoke_debug,
+        }
+        try:
+            result = _service.enqueue_job(tenant_id, loan_id, request)
+            results.append({
+                "loan_id": loan_id,
+                "status": "QUEUED",
+                "job_id": result["job_id"],
+                "run_id": run_id,
+            })
+        except Exception as e:
+            results.append({"loan_id": loan_id, "status": "FAILED", "reason": str(e)})
+    _warn_if_no_recent_worker_heartbeat()
+    queued = sum(1 for r in results if r["status"] == "QUEUED")
+    return {"total": len(results), "queued": queued, "results": results}
 
 
 @app.get("/tenants/{tenant_id}/loans/{loan_id}/runs")
