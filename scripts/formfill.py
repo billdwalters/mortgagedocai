@@ -77,7 +77,7 @@ _FORMS_DIR = Path(__file__).resolve().parent.parent / "webui" / "forms"
 
 # ---- Income Calc (W2) ----
 # Template layout (data-entry cells only, no formulas):
-#   Row 4:  C4=Borrower Name
+#   Row 4:  C4=Borrower Name, C5=Employer
 #   Row 11: C11=YTD Earnings, G11=# months  → J11=C11/G11 (formula)
 #   Row 12: C12=W2 Year 1,    G12=# months  → J12=C12/G12 (formula)
 #   Row 13: C13=W2 Year 2,    G13=# months  → J13=C13/G13 (formula)
@@ -86,6 +86,11 @@ _FORMS_DIR = Path(__file__).resolve().parent.parent / "webui" / "forms"
 #   Row 40: C40=Past year OT,  G40=# months → J40=C40/G40 (formula)
 # NOTE: C15-C20, C34 are formulas — do NOT overwrite.
 _INCOME_CALC_W2_MAPPINGS = (
+    # Borrower identity
+    FieldMapping("C4", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 label="Borrower name"),
+    FieldMapping("C5", "income_analysis", "borrowers.0.employer", CellType.TEXT,
+                 label="Employer name"),
     # Primary income component → YTD earnings row
     FieldMapping("C11", "income_analysis", "monthly_income_total.components.0.period_total", CellType.CURRENCY,
                  label="YTD earnings (1st income component period total)"),
@@ -105,19 +110,27 @@ _INCOME_CALC_W2_MAPPINGS = (
     # Monthly liabilities
     FieldMapping("C39", "dti", "monthly_debt_total", CellType.CURRENCY,
                  label="Monthly debt total (as OT/Bonus placeholder)"),
+    # First income item amount (if available)
+    FieldMapping("C10", "income_analysis", "income_items.0.amount", CellType.CURRENCY,
+                 label="Hourly/rate from first income item"),
 )
 
 # ---- FHA Max Mortgage Calc ----
-# Simple sheet: I10=UPB, I11=interest due, I5=county limit, I7=adjusted value
-# Streamline sheet: I6=outstanding balance, I12=original FHA amount
-# Pipeline extracts monthly liabilities and PITIA — map what we can.
+# Simple sheet: I5=county limit, I7=adjusted value, I10=UPB, I11=interest due,
+#   I12-I15=PACE/MIP/late/escrow, I19=UFMIP refund
+# Streamline sheet: I6=outstanding balance, I7=interest due, I8=MIP, I12=original FHA
+# R&T sheet: I5=county limit, I8=adjusted value, I12=UPB 1st mtg
+# Pipeline provides PITIA and liability details that map to existing balance fields.
 _FHA_MAX_MORTGAGE_MAPPINGS = (
-    # Simple sheet — existing mortgage balance approximation
+    # Simple sheet
     FieldMapping("I10", "dti", "housing_payment_used", CellType.CURRENCY,
-                 sheet="Simple", label="Monthly PITIA (as reference for existing mortgage)"),
-    # Streamline sheet — PITIA
+                 sheet="Simple", label="UPB (from PITIA as reference)"),
+    # Streamline sheet
     FieldMapping("I6", "dti", "housing_payment_used", CellType.CURRENCY,
-                 sheet=" Streamline (Owner-Occupied)", label="Monthly PITIA"),
+                 sheet=" Streamline (Owner-Occupied)", label="Outstanding principal balance (PITIA ref)"),
+    # R&T sheet
+    FieldMapping("I12", "dti", "housing_payment_used", CellType.CURRENCY,
+                 sheet="R&T", label="UPB first mortgage (PITIA ref)"),
 )
 
 # ---- VA IRRRL Recoupment Calc ----
@@ -149,10 +162,11 @@ _VA_IRRRL_MAPPINGS = (
 # F18=MIP refund, F22=MIP factor (0.0175), F30=note date, F33=first payment date,
 # F38=remaining term, F43/F44=amortization type, F47=current rate, F51=proposed rate
 # Most fields require specific mortgage details not extracted by pipeline.
+# Pipeline can populate PITIA-related fields and liabilities as context.
 _FHA_MAX_MTG_INITIAL_MAPPINGS = (
     FieldMapping("F5", "dti", "housing_payment_used", CellType.CURRENCY,
                  sheet="Streamline Worksheet",
-                 label="PITIA (reference for outstanding principal)"),
+                 label="Outstanding principal balance (PITIA as reference)"),
 )
 
 # ---- VA-IRRRL Worksheet ----
@@ -174,6 +188,7 @@ _VA_IRRRL_WORKSHEET_MAPPINGS = (
 # D11=Borrower(s), K11=Date, E13=Prior VA first payment date,
 # F17=Loan type, E18=State, H18=County, K18=Limit amount,
 # J21/J22=Entitlement, J23=Previously used, J27=Property value
+# Pipeline: borrower name, loan program from UW decision
 _VA_MAX_MORTGAGE_MAPPINGS = (
     FieldMapping("D11", "income_analysis", "borrowers.0.name", CellType.TEXT,
                  sheet="VA_Maximum_Mortgage_Worksheet",
@@ -181,29 +196,107 @@ _VA_MAX_MORTGAGE_MAPPINGS = (
 )
 
 # ---- Income Calc (UWM) ----
-# Sheet: "Income Calculator"
-# C4=Borrower name, C5=Employer name, C7=Start date, C24=Pay period end date,
-# C27=Pay frequency, C28=Rate of pay, C29=Hours/week,
-# C36=YTD base income, C37=Prior year W-2, C38=2-year prior W-2,
-# C40-C43=YTD OT/Bonus/Commission/Tips
+# 29 sheets. Most income-type sheets have C7=Borrower, C8=Employer (or similar).
+# "Income Calculator" (variable income): C4=Borrower, C5=Employer, C36=YTD base,
+#   C37=Prior year W-2, C38=2-year prior W-2, C40-C43=OT/Bonus/Commission/Tips
+# "Full Time Monthly": C7=Borrower, C8=Employer, E11=Monthly Rate
+# "Full Time Annual Salary": C7=Borrower, C8=Employer, E11=Annual Rate
+# Self-Employed Sch C: E7/G7=Borrower Name
+# Partnership 1065 / S Corp 1120S / Corporation 1120: D7=Borrower Name
+# Summary: D5=Borrower Name, J5=Employer Name
 _INCOME_CALC_UWM_MAPPINGS = (
+    # Variable Income Calculator sheet — borrower + employer
     FieldMapping("C4", "income_analysis", "borrowers.0.name", CellType.TEXT,
                  sheet="Income Calculator",
-                 label="Borrower name"),
+                 label="Borrower name (variable income)"),
     FieldMapping("C5", "income_analysis", "borrowers.0.employer", CellType.TEXT,
                  sheet="Income Calculator",
-                 label="Employer name"),
+                 label="Employer name (variable income)"),
+    # Full Time Monthly — borrower + employer + monthly rate
+    FieldMapping("C7", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 sheet="Full Time Monthly",
+                 label="Borrower name (full time monthly)"),
+    FieldMapping("C8", "income_analysis", "borrowers.0.employer", CellType.TEXT,
+                 sheet="Full Time Monthly",
+                 label="Employer name (full time monthly)"),
+    FieldMapping("E11", "dti", "monthly_income_total", CellType.CURRENCY,
+                 sheet="Full Time Monthly",
+                 label="Monthly rate (pipeline monthly income)"),
+    # Full Time Hourly — borrower + employer
+    FieldMapping("C7", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 sheet="Full Time Hourly",
+                 label="Borrower name (hourly)"),
+    FieldMapping("C8", "income_analysis", "borrowers.0.employer", CellType.TEXT,
+                 sheet="Full Time Hourly",
+                 label="Employer name (hourly)"),
+    # Full Time Semi-Monthly — borrower + employer
+    FieldMapping("C7", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 sheet="Full Time Semi-Monthly",
+                 label="Borrower name (semi-monthly)"),
+    FieldMapping("C8", "income_analysis", "borrowers.0.employer", CellType.TEXT,
+                 sheet="Full Time Semi-Monthly",
+                 label="Employer name (semi-monthly)"),
+    # Full Time Bi-Weekly — borrower + employer
+    FieldMapping("C7", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 sheet="Full Time Bi-Weekly",
+                 label="Borrower name (bi-weekly)"),
+    FieldMapping("C8", "income_analysis", "borrowers.0.employer", CellType.TEXT,
+                 sheet="Full Time Bi-Weekly",
+                 label="Employer name (bi-weekly)"),
+    # Full Time Annual Salary — borrower + employer
+    FieldMapping("C7", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 sheet="Full Time Annual Salary",
+                 label="Borrower name (annual salary)"),
+    FieldMapping("C8", "income_analysis", "borrowers.0.employer", CellType.TEXT,
+                 sheet="Full Time Annual Salary",
+                 label="Employer name (annual salary)"),
+    # Self-Employed Sch C — borrower name
+    FieldMapping("G7", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 sheet="Self Employed Sch C",
+                 label="Borrower name (Sch C)"),
+    # Partnership 1065 — borrower name
+    FieldMapping("G7", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 sheet="Partnership 1065",
+                 label="Borrower name (1065)"),
+    # S Corp 1120S — borrower name
+    FieldMapping("G7", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 sheet="S Corp 1120S",
+                 label="Borrower name (1120S)"),
+    # Corporation 1120 — borrower name
+    FieldMapping("G7", "income_analysis", "borrowers.0.name", CellType.TEXT,
+                 sheet="Corporation 1120",
+                 label="Borrower name (1120)"),
 )
 
 # ---- Bank Statement Loan Calculator (UWM) ----
 # 7 sheets: Personal/Business Asset Analysis, Business Assets Calculation,
 # Reserve Calculator, Subject Property Reserves, Summary, Lists
 # Primarily deposit-by-deposit analysis — pipeline cannot fill individual deposits.
-# A2=Business name, A4/B4=Loan amount on Personal/Business sheets
+# Personal sheet: A2=Business name
+# Business sheet: A2=Business name
+# Reserve Calculator: C6=Loan Amount, C7=Subject PITIA, C10=REO PITIA
+# Subject Property Reserves: G10=Subject PITIA, G12=Required months
 _BANK_STMT_LOAN_CALC_MAPPINGS = (
+    # Personal Assets sheet — business name
     FieldMapping("A2", "income_analysis", "borrowers.0.employer", CellType.TEXT,
                  sheet="Personal Assets Analysis & Calc",
-                 label="Business name (from employer)"),
+                 label="Business name (personal sheet)"),
+    # Business Assets sheet — business name
+    FieldMapping("A2", "income_analysis", "borrowers.0.employer", CellType.TEXT,
+                 sheet="Business Asset Analysis",
+                 label="Business name (business sheet)"),
+    # Reserve Calculator — Subject Property PITIA
+    FieldMapping("C7", "dti", "housing_payment_used", CellType.CURRENCY,
+                 sheet="Reserve Calculator",
+                 label="Subject property PITIA"),
+    # Reserve Calculator — first liability as REO PITIA reference
+    FieldMapping("C10", "dti", "inputs_snapshot.liability_details.0.payment_monthly", CellType.CURRENCY,
+                 sheet="Reserve Calculator",
+                 label="REO PITIA (1st liability payment)"),
+    # Subject Property Reserves — PITIA
+    FieldMapping("G10", "dti", "housing_payment_used", CellType.CURRENCY,
+                 sheet="Subject Property Reserves",
+                 label="Subject property PITIA"),
 )
 
 
@@ -409,7 +502,18 @@ def fill_form(
         elif mapping.cell_type == CellType.TEXT:
             value = str(value)
 
-        ws[mapping.cell] = value
+        try:
+            ws[mapping.cell] = value
+        except AttributeError:
+            # Merged cells raise AttributeError on write — skip gracefully
+            skipped_fields.append({
+                "cell": mapping.cell,
+                "source": mapping.source,
+                "json_path": mapping.json_path,
+                "label": mapping.label,
+                "reason": "merged_cell",
+            })
+            continue
         cells_filled += 1
 
     # Save output

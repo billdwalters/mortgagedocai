@@ -20,8 +20,8 @@
 - LLM **extracts structured data only** (conditions, financial inputs)
 - **Python computes all financial math** — LLM must NEVER compute DTI or underwriting decisions
 - Profiles active: `default`, `uw_conditions`, `income_analysis`, `uw_decision`
-- **Form Fill** feature live: pre-fills Excel worksheets from pipeline data (3 templates, extensible)
-- Next phase (v0.6): Deterministic underwriting decision engine hardening, more form templates
+- **Form Fill** feature live: pre-fills Excel worksheets from pipeline data (8 templates, 44 field mappings)
+- Next phase (v0.6): Deterministic underwriting decision engine hardening, extraction accuracy tuning
 
 ---
 
@@ -151,7 +151,7 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 - `formfill.py` — Form registry (`FORM_TEMPLATES`), `FieldMapping`/`FormTemplate` dataclasses, `fill_form()` filler logic (openpyxl)
 
 **Tests (129 passing as of 2026-03-23: 119 main + 10 cleanup_orphans):**
-- `test_formfill.py` — Form registry, JSON path resolution, filler logic (19 tests)
+- `test_formfill.py` — Form registry, JSON path resolution, filler logic (23 tests)
 - `test_job_hardening.py` — Job workflow resilience (10 tests)
 - `test_source_path_validation.py` — Source path validation (5 tests)
 - `test_step12_uw_conditions.py` — UW conditions extraction (17 tests)
@@ -168,7 +168,7 @@ Format: `PHASE:<NAME> YYYY-MM-DDTHH:MM:SSZ` — Web UI parses these for progress
 
 ## Recently Completed Work (as of 2026-03-23)
 
-All TDD (red → green → regression). 129 tests passing (119 main + 10 cleanup_orphans).
+All TDD (red → green → regression). 133 tests passing (123 main + 10 cleanup_orphans).
 
 ### Web UI Nice-to-Have Items #16–#23 (2026-03-23)
 | Item | What was built |
@@ -253,9 +253,9 @@ All TDD (red → green → regression). 129 tests passing (119 main + 10 cleanup
 ### Form Fill Feature (2026-03-04)
 | Component | What was built |
 |-----------|---------------|
-| `scripts/formfill.py` | `FormTemplate`/`FieldMapping` dataclasses, `FORM_TEMPLATES` registry (3 templates), `fill_form()` filler with openpyxl (preserves formulas), `_resolve_json_path()`, `_load_source_data()`, audit dict return |
-| `scripts/test_formfill.py` | 19 tests: registry validation, JSON path resolution, source data loading, fill_form (audit, dir creation, formula preservation, invalid template, missing values, numeric types) |
-| `webui/forms/*.xlsx` | 3 Excel templates: `income_calc_w2.xlsx`, `fha_max_mortgage_calc.xlsx`, `va_irrrl_recoupment_calc.xlsx` |
+| `scripts/formfill.py` | `FormTemplate`/`FieldMapping` dataclasses, `FORM_TEMPLATES` registry (8 templates, 44 mappings), `fill_form()` filler with openpyxl (preserves formulas, merged cell protection), `_resolve_json_path()`, `_load_source_data()`, audit dict return |
+| `scripts/test_formfill.py` | 23 tests: registry validation, JSON path resolution, source data loading, fill_form (audit, dir creation, formula preservation, invalid template, missing values, numeric types, borrower fill, multi-sheet fill, PITIA fill, 3-sheet FHA fill) |
+| `webui/forms/*.xlsx` | 8 Excel templates: 3 `.xlsx` (income_calc_w2, fha_max_mortgage_calc, va_irrrl_recoupment_calc), 2 `.xlsx` (FHA Max Mtg Initial, VA-IRRRL Worksheet), 3 `.xlsm` (VA Max Mortgage, Income Calc UWM, Bank Stmt Loan Calc) |
 | `loan_api.py` | `GET /formfill/templates` (list by category), `POST .../formfill/{template_id}` (generate + download), `.xlsx` media type |
 | `webui/` | Dropdown + Generate button in `main-actions`; `initFormFill` IIFE (static fallback + API refresh, blob download, inline feedback) |
 | Output path | `nas_analyze/.../outputs/formfill/{template_id}.xlsx` |
@@ -300,7 +300,7 @@ All TDD (red → green → regression). 129 tests passing (119 main + 10 cleanup
 
 ## What's Next (Priority Order)
 
-1. **More form templates** — Add remaining 7 worksheets to `FORM_TEMPLATES` registry (extraction profiles now support borrower/employer fields).
+1. ~~**More form templates**~~ — DONE (2026-04-02). All 8 templates registered with 44 field mappings. 2 legacy `.xls` files remain (need conversion or `xlrd`).
 2. **Server migration** — Punch list #24 (bootstrap on new GPU server).
 3. **Extraction accuracy tuning** — Punch list #25 (batch-process diverse loans, tune prompts post-GPU migration).
 
@@ -324,7 +324,7 @@ cd m:\mortgagedocai
 python -m py_compile scripts/step12_analyze.py
 python -m py_compile scripts/step13_build_retrieval_pack.py
 
-# Run full test suite (129 tests)
+# Run full test suite (133 tests)
 python -m pytest scripts/test_formfill.py \
                  scripts/test_step13_chunk_index.py \
                  scripts/test_step12_version_blob.py \

@@ -1,6 +1,6 @@
 # MortgageDocAI — Project Status
 
-**Last Updated:** 2026-03-23
+**Last Updated:** 2026-04-02
 
 ## Current phase & AI context
 
@@ -17,11 +17,11 @@
 6. Form fill feature for mortgage worksheets
 
 **Priority order:**
-1. Expand form fill templates (7 more worksheets) — extraction now supports borrower/employer fields.
+1. ~~Expand form fill templates~~ — DONE (2026-04-02). All 8 templates registered, 44 field mappings, merged cell protection.
 2. Server migration prep (punch list #24).
 3. Extraction accuracy tuning post-GPU migration (punch list #25).
 
-**Completed (2026-03-23):** All Web UI punch list items (#1–#23) complete. System-wide code audit (2 rounds, 40 fixes across 19 files). income_analysis v2, DTI hardening, UW decision v0.8, audit trail.
+**Completed (2026-04-02):** Form fill enrichment (8 templates, 44 mappings, 4 new tests). All Web UI punch list items (#1–#23) complete. System-wide code audit (2 rounds, 40 fixes across 19 files). income_analysis v2, DTI hardening, UW decision v0.8, audit trail.
 
 **Non-negotiables:** No cloud APIs. Do not rename folders/files. Preserve folder contracts (`nas_chunk/`, `nas_analyze/`, `outputs/`). Maintain `run_id` determinism. Preserve citation-integrity filtering. No change that breaks the regression smoke test.  
 

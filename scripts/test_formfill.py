@@ -36,7 +36,7 @@ def test_registry_income_calc_w2_exists():
     assert t.display_name == "Income Calc (W2)"
     assert t.category == "Income"
     assert t.filename == "income_calc_w2.xlsx"
-    assert len(t.mappings) >= 5
+    assert len(t.mappings) >= 9
 
 
 def test_registry_fha_max_mortgage_exists():
@@ -76,14 +76,14 @@ def test_registry_income_calc_uwm_exists():
     t = FORM_TEMPLATES["income_calc_uwm"]
     assert t.display_name == "Income Calc (UWM)"
     assert t.category == "Income"
-    assert len(t.mappings) >= 2
+    assert len(t.mappings) >= 10
 
 
 def test_registry_bank_stmt_loan_calc_exists():
     t = FORM_TEMPLATES["bank_stmt_loan_calc"]
     assert t.display_name == "Bank Statement Loan Calculator"
     assert t.category == "Income"
-    assert len(t.mappings) >= 1
+    assert len(t.mappings) >= 3
 
 
 def test_all_templates_have_xlsx_files():
@@ -171,6 +171,10 @@ def _make_profiles_dir(tmp_path):
     (profiles / "uw_decision").mkdir(parents=True)
     (profiles / "uw_conditions").mkdir(parents=True)
     (profiles / "income_analysis" / "income_analysis.json").write_text(json.dumps({
+        "borrowers": [
+            {"name": "John Smith", "role": "primary", "employer": "Acme Corp",
+             "employment_type": "W2", "citations": []},
+        ],
         "monthly_income_total": {
             "value": 6500.0,
             "components": [
@@ -248,6 +252,56 @@ def test_fill_form_skips_missing_values(tmp_path):
     result = fill_form("income_calc_w2", profiles, out, loan_id="1", run_id="x")
     assert result["cells_filled"] == 0
     assert len(result["skipped_fields"]) == result["cells_total"]
+
+
+def test_fill_form_w2_fills_borrower_name(tmp_path):
+    """Income Calc W2 should fill borrower name from income_analysis.borrowers."""
+    import openpyxl
+    profiles = _make_profiles_dir(tmp_path)
+    out = tmp_path / "output" / "income_calc_w2.xlsx"
+    result = fill_form("income_calc_w2", profiles, out, loan_id="12345", run_id="2026-01-01T120000Z")
+    assert result["cells_filled"] >= 5  # borrower, employer, income components, salary, PITIA, debt
+    wb = openpyxl.load_workbook(str(out))
+    ws = wb[wb.sheetnames[0]]
+    assert ws["C4"].value == "John Smith"
+    assert ws["C5"].value == "Acme Corp"
+
+
+def test_fill_form_uwm_fills_multiple_sheets(tmp_path):
+    """Income Calc UWM should fill borrower name on multiple sheets."""
+    import openpyxl
+    profiles = _make_profiles_dir(tmp_path)
+    out = tmp_path / "output" / "income_calc_uwm.xlsm"
+    result = fill_form("income_calc_uwm", profiles, out, loan_id="12345", run_id="2026-01-01T120000Z")
+    assert result["cells_filled"] >= 5  # borrower + employer on multiple sheets + monthly rate
+    wb = openpyxl.load_workbook(str(out), keep_vba=True)
+    assert wb["Full Time Monthly"]["C7"].value == "John Smith"
+    assert wb["Full Time Monthly"]["C8"].value == "Acme Corp"
+    assert wb["Full Time Monthly"]["E11"].value == 6500.0
+    assert wb["Income Calculator"]["C4"].value == "John Smith"
+
+
+def test_fill_form_bank_stmt_fills_pitia(tmp_path):
+    """Bank Statement Loan Calc should fill Subject PITIA on Reserve Calculator."""
+    import openpyxl
+    profiles = _make_profiles_dir(tmp_path)
+    out = tmp_path / "output" / "bank_stmt.xlsm"
+    result = fill_form("bank_stmt_loan_calc", profiles, out, loan_id="12345", run_id="2026-01-01T120000Z")
+    assert result["cells_filled"] >= 2  # business name + PITIA at minimum
+    wb = openpyxl.load_workbook(str(out), keep_vba=True)
+    assert wb["Reserve Calculator"]["C7"].value == 2100.0
+
+
+def test_fill_form_fha_max_mortgage_fills_three_sheets(tmp_path):
+    """FHA Max Mortgage Calc should fill PITIA on Simple, Streamline, and R&T sheets."""
+    import openpyxl
+    profiles = _make_profiles_dir(tmp_path)
+    out = tmp_path / "output" / "fha_max.xlsx"
+    result = fill_form("fha_max_mortgage_calc", profiles, out, loan_id="12345", run_id="2026-01-01T120000Z")
+    assert result["cells_filled"] >= 2  # at least Simple + Streamline
+    wb = openpyxl.load_workbook(str(out))
+    assert wb["Simple"]["I10"].value == 2100.0
+    assert wb[" Streamline (Owner-Occupied)"]["I6"].value == 2100.0
 
 
 def test_fill_form_writes_numeric_values(tmp_path):
