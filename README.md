@@ -14,3 +14,4 @@ Qdrant (localhost only) via docker compose:
 
 Qdrant snapshots to TrueNAS:
   qdrant-snapshot snapshot --tenant-id peak --nas-root /mnt/nas_apps/nas_chunk/_meta/qdrant_snapshots
+# peakaiserver
