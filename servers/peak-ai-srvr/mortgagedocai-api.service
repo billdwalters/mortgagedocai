@@ -1,0 +1,40 @@
+[Unit]
+Description=MortgageDocAI FastAPI Service
+After=network-online.target tailscaled.service docker.service qdrant.service ollama.service
+Wants=network-online.target tailscaled.service qdrant.service ollama.service
+
+[Service]
+Type=simple
+User=bill
+Group=bill
+WorkingDirectory=/opt/mortgagedocai
+
+ExecStartPre=/bin/bash -lc 'while ss -ltn sport = :8000 | grep -q LISTEN; do echo "8000 busy, waiting..."; sleep 1; done'
+
+# Centralized environment (NO secrets in unit file)
+EnvironmentFile=/etc/mortgagedocai/env
+EnvironmentFile=-/etc/mortgagedocai/env.local
+
+Environment="PATH=/opt/mortgagedocai/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="HF_HUB_DISABLE_PROGRESS_BARS=1"
+Environment="TRANSFORMERS_VERBOSITY=error"
+Environment="TQDM_MININTERVAL=999999"
+
+# IMPORTANT: bootstrap patches --host to Tailscale IPv4
+ExecStart=/opt/mortgagedocai/venv/bin/python3 scripts/loan_api.py --host 0.0.0.0 --port 8000
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

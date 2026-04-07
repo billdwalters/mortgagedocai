@@ -1,0 +1,13 @@
+[Unit]
+Description=Tailscale Funnel for MortgageDocAI
+After=tailscaled.service network-online.target
+Requires=tailscaled.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/tailscale funnel --bg 8000
+ExecStop=/usr/bin/tailscale funnel --https=443 off
+
+[Install]
+WantedBy=multi-user.target
